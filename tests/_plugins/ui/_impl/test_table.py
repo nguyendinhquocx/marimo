@@ -1116,12 +1116,14 @@ def test_table_with_frozen_columns() -> None:
     not DependencyManager.pandas.has(), reason="Pandas not installed"
 )
 class TestFrozenRowHeaders:
-    def test_freeze_unnamed_pandas_index_rejected(self) -> None:
+    def test_freeze_unnamed_pandas_index(self) -> None:
         import pandas as pd
 
+        # An unnamed index is exposed as the row header "Index0", so it has a
+        # stable name that can be frozen like any named index.
         df = pd.DataFrame({"a": [1, 2, 3]}, index=["x", "y", "z"])
-        with pytest.raises(ValueError, match="unnamed row index"):
-            ui.table(df, freeze_columns_left=[""])
+        table = ui.table(df, freeze_columns_left=["Index0"])
+        assert table._component_args["freeze-columns-left"] == ["Index0"]
 
     def test_freeze_named_pandas_index(self) -> None:
         import pandas as pd
@@ -1276,6 +1278,31 @@ def test_table_hidden_columns_row_header_raises() -> None:
         ui.table(df, hidden_columns=[name])
 
 
+@pytest.mark.skipif(
+    not DependencyManager.pandas.has(), reason="Pandas not installed"
+)
+def test_get_data_url_includes_named_index() -> None:
+    import pandas as pd
+
+    from marimo._plugins.ui._impl.charts.altair_transformer import (
+        _data_to_csv_string,
+    )
+
+    df = pd.DataFrame(
+        {"v": [1, 2, 3]},
+        index=pd.Index(["a", "b", "c"], name="k"),
+    )
+    table = ui.table(df)
+    response = table._get_data_url(EmptyArgs())
+    assert response.data_url  # produced without error
+
+    # The flattened manager exposes the index as a column.
+    flattened = table._searched_manager.with_index_as_columns()
+    assert "k" in flattened.get_column_names()
+    csv = _data_to_csv_string(flattened.data)
+    assert "k" in csv.splitlines()[0]
+
+
 @pytest.mark.parametrize(
     "df",
     create_dataframes({"a": [1, 2, 3], "b": ["abc", "def", None]}),
@@ -1423,7 +1450,46 @@ def test_show_download(df: Any) -> None:
     assert table_false._component_args["show-download"] is False
 
 
-DOWNLOAD_FORMATS = ["csv", "json", "parquet"]
+@pytest.mark.parametrize(
+    "df",
+    create_dataframes(
+        {"a": [1, 2, 3], "b": [4, 5, 6]},
+    ),
+)
+def test_show_search(df: Any) -> None:
+    table_default = ui.table(df)
+    assert table_default._component_args["show-search"] is True
+
+    table_true = ui.table(df, show_search=True)
+    assert table_true._component_args["show-search"] is True
+
+    table_false = ui.table(df, show_search=False)
+    assert table_false._component_args["show-search"] is False
+
+
+@pytest.mark.parametrize(
+    "df",
+    create_dataframes(
+        {"a": [1, 2, 3], "b": [4, 5, 6]},
+    ),
+)
+def test_display_config_unpacks(df: Any) -> None:
+    cfg = ui.table.Display(show_search=False, show_download=False)
+    assert cfg == {"show_search": False, "show_download": False}
+
+    t = ui.table(df, **cfg)
+    assert t._component_args["show-search"] is False
+    assert t._component_args["show-download"] is False
+
+    # Deriving a variant leaves the original untouched
+    variant = {**cfg, "show_column_summaries": False}
+    assert "show_column_summaries" not in cfg
+    t2 = ui.table(df, **variant)
+    assert t2._component_args["show-search"] is False
+    assert t2._component_args["show-column-summaries"] is False
+
+
+DOWNLOAD_FORMATS = ["csv", "tsv", "json", "parquet"]
 
 # Parquet export requires pandas+pyarrow or polars (see the `_download_as`
 # short-circuit in `table.py`). In environments without those — e.g. the
@@ -1432,7 +1498,7 @@ _CAN_EXPORT_PARQUET = DependencyManager.polars.has() or (
     DependencyManager.pandas.has() and DependencyManager.pyarrow.has()
 )
 _TESTABLE_DOWNLOAD_FORMATS = (
-    DOWNLOAD_FORMATS if _CAN_EXPORT_PARQUET else ["csv", "json"]
+    DOWNLOAD_FORMATS if _CAN_EXPORT_PARQUET else ["csv", "tsv", "json"]
 )
 
 
@@ -1506,6 +1572,22 @@ def test_download_as(df: Any) -> None:
                 import pyarrow.csv as pacsv
 
                 return pacsv.read_csv(buffer)
+        elif format_type == "tsv":
+            if DependencyManager.pandas.has():
+                import pandas as pd
+
+                return pd.read_csv(buffer, sep="\t")
+            elif DependencyManager.polars.has():
+                import polars as pl
+
+                return pl.read_csv(buffer, separator="\t")
+            elif DependencyManager.pyarrow.has():
+                import pyarrow.csv as pacsv
+
+                return pacsv.read_csv(
+                    buffer,
+                    parse_options=pacsv.ParseOptions(delimiter="\t"),
+                )
         raise ValueError(f"Unsupported format: {format_type}")
 
     # Test base downloads (full data)
@@ -1655,7 +1737,7 @@ def test_download_as_for_supported_cell_selection() -> None:
 )
 @pytest.mark.parametrize(
     "fmt",
-    ["csv", "json", "parquet"],
+    ["csv", "tsv", "json", "parquet"],
 )
 def test_download_as_for_dataframes(df: Any, fmt: str) -> None:
     table = ui.table(df)
@@ -2341,13 +2423,13 @@ def test_json_multi_col_idx_table() -> None:
     json_data = json.loads(table._component_args["data"])
     assert json_data == [
         {
-            "": "All",
+            "Index0": "All",
             INDEX_COLUMN_NAME: 0,
             "basic_amt,NSW": 1,
             "basic_amt,QLD": 1,
         },
         {
-            "": "Full",
+            "Index0": "Full",
             INDEX_COLUMN_NAME: 1,
             "basic_amt,NSW": 0,
             "basic_amt,QLD": 1,
@@ -2415,6 +2497,8 @@ def test_lazy_dataframe(df: Any) -> None:
         assert table._component_args["show-page-size-selector"] is False
         assert table._component_args["show-column-explorer"] is False
         assert table._component_args["show-chart-builder"] is False
+        # Search is pushed down to the lazy backend, so it stays available.
+        assert table._component_args["show-search"] is True
 
         # Verify that search response indicates "too_many" for total_rows
         # but returns the preview rows
@@ -3253,3 +3337,18 @@ def test_search_raw_data_with_query_and_format_mapping() -> None:
     assert json.loads(result.raw_data) == [
         {"name": "bob", "score": 20},
     ]
+
+
+def test_column_widths_valid():
+    t = ui.table({"a": [1, 2], "b": [3, 4]}, column_widths={"a": 100})
+    assert t._component_args["column-widths"] == {"a": 100}
+
+
+def test_column_widths_unknown_column():
+    with pytest.raises(ValueError, match="not found in table"):
+        ui.table({"a": [1, 2]}, column_widths={"missing": 100})
+
+
+def test_column_widths_non_positive():
+    with pytest.raises(ValueError, match="positive integer"):
+        ui.table({"a": [1, 2]}, column_widths={"a": 0})

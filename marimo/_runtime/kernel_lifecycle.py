@@ -17,6 +17,7 @@ from marimo import _loggers
 from marimo._runtime import patches
 from marimo._runtime.commands import (
     ModelCommand,
+    OutOfBandCommand,
     StopKernelCommand,
     UpdateUIElementCommand,
 )
@@ -72,7 +73,6 @@ class KernelArgs:
     control_queue: ControlQueue
     set_ui_element_queue: UIElementQueue
     virtual_file_storage: VirtualFileStorageType | None
-    print_override_fn: Callable[[Any], None] | None
 
     @property
     def is_edit_mode(self) -> bool:
@@ -98,6 +98,31 @@ def drain_stale(queue: Any, *, latest: _T) -> _T:
             latest = queue.get_nowait()
         except (asyncio.QueueEmpty, _queue.Empty):
             return latest
+
+
+def collapse_out_of_band(
+    queue: Any, *, first: OutOfBandCommand
+) -> list[OutOfBandCommand]:
+    """Drain queued out-of-band commands, keeping the latest of each type.
+
+    `first` is the already-dequeued command that unblocked the worker; the
+    rest of the queue is drained non-blockingly. Out-of-band commands are
+    idempotent "latest wins" updates, so older commands of the same type are
+    stale and dropped. Returns one command per type, in first-seen order.
+
+    Works for both `multiprocessing`/`queue.Queue` and `asyncio.Queue` (both
+    expose a synchronous `get_nowait`); `empty()` is avoided because
+    `multiprocessing.Queue.empty()` can lie.
+    """
+    latest: dict[type, OutOfBandCommand] = {}
+    item: OutOfBandCommand | None = first
+    while item is not None:
+        latest[type(item)] = item
+        try:
+            item = queue.get_nowait()
+        except (asyncio.QueueEmpty, _queue.Empty):
+            item = None
+    return list(latest.values())
 
 
 def _build_hooks(
@@ -153,7 +178,6 @@ def create_kernel(
         module=patches.patch_main_module(
             file=args.app_metadata.filename,
             input_override=input_override,
-            print_override=args.print_override_fn,
             doc=args.app_metadata.docstring,
         ),
         debugger_override=args.debugger,
@@ -247,5 +271,7 @@ def teardown_kernel(kernel: Kernel, ctx: KernelRuntimeContext) -> None:
     # destruction from cleaning them up.
     ctx.virtual_file_registry.shutdown()
     ctx.app_kernel_runner_registry.shutdown()
+    # NB. must run before teardown_context() unsets the context below.
+    kernel.teardown_callbacks()
     teardown_context()
     kernel.teardown()

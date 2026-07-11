@@ -4,6 +4,8 @@ from __future__ import annotations
 from typing import Any
 from unittest.mock import patch
 
+import msgspec
+
 from marimo._ast.cell import RuntimeStateType
 from marimo._data.models import (
     Database,
@@ -19,6 +21,7 @@ from marimo._messaging.notification import (
     CellNotification,
     DatasetsNotification,
     DataSourceConnectionsNotification,
+    EsmSpec,
     InstallingPackageAlertNotification,
     ModelClose,
     ModelCustom,
@@ -81,6 +84,57 @@ def test_session_view_cell_notification(session_view: SessionView) -> None:
 
     assert session_view.cell_notifications[cell_id].output == updated_output
     assert session_view.cell_notifications[cell_id].status == updated_status
+
+
+def test_session_view_serialization_hint_survives_status_updates(
+    session_view: SessionView,
+) -> None:
+    # A top-level definition advertises its reusability hint.
+    session_view.add_notification(
+        CellNotification(cell_id=cell_id, serialization="Valid")
+    )
+    assert session_view.cell_notifications[cell_id].serialization == "Valid"
+
+    # Subsequent lifecycle updates omit serialization (UNSET) and must not
+    # wipe the hint — otherwise a reconnect snapshot loses the badge.
+    for status in ("queued", "running", "idle"):
+        status_update = CellNotification(cell_id=cell_id, status=status)
+        assert status_update.serialization is msgspec.UNSET
+        session_view.add_notification(status_update)
+        assert (
+            session_view.cell_notifications[cell_id].serialization == "Valid"
+        )
+
+
+def test_session_view_serialization_hint_explicit_clear(
+    session_view: SessionView,
+) -> None:
+    session_view.add_notification(
+        CellNotification(cell_id=cell_id, serialization="Valid")
+    )
+    # An explicit None clears the hint (cell is no longer a top-level def).
+    session_view.add_notification(
+        CellNotification(cell_id=cell_id, serialization=None)
+    )
+    assert session_view.cell_notifications[cell_id].serialization is None
+
+
+def test_cell_notification_serialization_wire_encoding() -> None:
+    # UNSET is omitted (unchanged), None is sent explicitly (clear), a string
+    # is sent verbatim (set).
+    assert "serialization" not in serialize(CellNotification(cell_id=cell_id))
+    assert (
+        serialize(CellNotification(cell_id=cell_id, serialization=None))[
+            "serialization"
+        ]
+        is None
+    )
+    assert (
+        serialize(CellNotification(cell_id=cell_id, serialization="Valid"))[
+            "serialization"
+        ]
+        == "Valid"
+    )
 
 
 # Test adding Variables to SessionView
@@ -373,6 +427,56 @@ class TestModelReplayState:
             ModelUpdate(state={"b": 99, "c": 3}, buffer_paths=[], buffers=[])
         )
         assert view.state == {"a": 1, "b": 99, "c": 3}
+
+    def test_esm_spec_round_trips(self) -> None:
+        """Late joiners must receive the spec from the original open."""
+        spec = EsmSpec(url="./@file/10-w.js", hash="abc123")
+        view = ModelReplayState.from_open(
+            WidgetModelId("m"),
+            ModelOpen(
+                state={"count": 1},
+                buffer_paths=[],
+                buffers=[],
+                esm_spec=spec,
+            ),
+        )
+        assert view.esm_spec == spec
+        assert view.to_notification().message.esm_spec == spec
+
+    def test_apply_update_preserves_spec_by_default(self) -> None:
+        """Ordinary state updates carry no spec and must not clear it."""
+        spec = EsmSpec(url="./@file/10-w.js", hash="abc123")
+        view = ModelReplayState(
+            model_id=WidgetModelId("m"),
+            state={"count": 1},
+            buffers={},
+            esm_spec=spec,
+        )
+        view.apply_update(
+            ModelUpdate(state={"count": 2}, buffer_paths=[], buffers=[])
+        )
+        assert view.esm_spec == spec
+
+    def test_apply_update_with_spec_replaces_it(self) -> None:
+        """A spec on an update is an edit-mode hot reload; late joiners
+        must replay the new code, not the original open's."""
+        view = ModelReplayState(
+            model_id=WidgetModelId("m"),
+            state={},
+            buffers={},
+            esm_spec=EsmSpec(url="./@file/10-old.js", hash="old"),
+        )
+        new_spec = EsmSpec(url="./@file/10-new.js", hash="new")
+        view.apply_update(
+            ModelUpdate(
+                state={},
+                buffer_paths=[],
+                buffers=[],
+                esm_spec=new_spec,
+            )
+        )
+        assert view.esm_spec == new_spec
+        assert view.to_notification().message.esm_spec == new_spec
 
     def test_apply_update_replaces_buffer_for_updated_key(self) -> None:
         view = ModelReplayState(
@@ -1045,6 +1149,51 @@ def test_combine_console_outputs(
     assert session_view.cell_notifications[cell_id].console == [
         CellOutput.stdout("three")
     ]
+
+
+@patch("time.time", return_value=123)
+def test_explicit_empty_console_clears_mid_run(
+    time_mock: Any, session_view: SessionView
+) -> None:
+    """An explicit `console=[]` clears the session view, even while running."""
+    del time_mock
+    session_view.add_notification(
+        CellNotification(
+            cell_id=cell_id,
+            console=CellOutput.stdout("secret"),
+            status="running",
+        )
+    )
+    session_view.add_notification(
+        CellNotification(
+            cell_id=cell_id,
+            console=CellOutput.stdout(" code"),
+            status="running",
+        )
+    )
+    assert session_view.cell_notifications[cell_id].console == [
+        CellOutput.stdout("secret code"),
+    ]
+
+    # Explicit clear mid-run (status stays "running", no queued transition).
+    session_view.add_notification(
+        CellNotification(
+            cell_id=cell_id,
+            console=[],
+            status="running",
+        )
+    )
+    assert session_view.cell_notifications[cell_id].console == []
+
+    # A subsequent status-only update (console unchanged) keeps it cleared.
+    session_view.add_notification(
+        CellNotification(
+            cell_id=cell_id,
+            console=None,
+            status="running",
+        )
+    )
+    assert session_view.cell_notifications[cell_id].console == []
 
 
 @patch("time.time", return_value=123)

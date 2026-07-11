@@ -65,7 +65,6 @@ from marimo._messaging.notification_utils import (
     CellNotificationUtils,
     broadcast_notification,
 )
-from marimo._messaging.print_override import print_override
 from marimo._messaging.streams import (
     QueuePipe,
     ThreadSafeStderr,
@@ -97,6 +96,8 @@ from marimo._runtime.callbacks import (
     PackagesCallbacks,
     SecretsCallbacks,
     SqlCallbacks,
+    SupportsTeardown,
+    cache_cells_enabled,
 )
 from marimo._runtime.commands import (
     AppMetadata,
@@ -108,6 +109,8 @@ from marimo._runtime.commands import (
     ExecuteCellCommand,
     ExecuteStaleCellsCommand,
     InvokeFunctionCommand,
+    OutOfBandCommand,
+    SetBreakpointsCommand,
     UpdateCellConfigCommand,
     UpdateUIElementCommand,
     UpdateUserConfigCommand,
@@ -489,7 +492,11 @@ class Kernel:
         self.datasets_callbacks = DatasetCallbacks(self)
         self.packages_callbacks = PackagesCallbacks(self)
         self.sql_callbacks = SqlCallbacks(self)
-        self.cache_callbacks = CacheCallbacks(self)
+        self.cache_callbacks = CacheCallbacks(
+            self,
+            caching_enabled=lambda: cache_cells_enabled(self.user_config),
+            notebook_filename=app_metadata.filename,
+        )
         self.external_storage_callbacks = ExternalStorageCallbacks(self)
         self._callbacks: list[KernelCallback] = [
             self.secrets_callbacks,
@@ -516,7 +523,7 @@ class Kernel:
 
         self._globals_lock = threading.RLock()
         self._state_lock = threading.RLock()
-        self._completion_worker_started = False
+        self._out_of_band_worker_started = False
 
         self.debugger = debugger_override
         if self.debugger is not None:
@@ -621,6 +628,15 @@ class Kernel:
     def stdin(self) -> Stdin | None:
         return self._streams.stdin
 
+    def teardown_callbacks(self) -> None:
+        """Run callback teardown while the runtime context is still alive."""
+        for cb in self._callbacks:
+            if isinstance(cb, SupportsTeardown):
+                try:
+                    cb.teardown()
+                except Exception:
+                    LOGGER.warning("Callback teardown failed", exc_info=True)
+
     def teardown(self) -> None:
         """Teardown resources owned by the kernel."""
         if self.stdout is not None:
@@ -664,30 +680,77 @@ class Kernel:
 
     @contextlib.contextmanager
     def lock_globals(self) -> Iterator[None]:
-        # The only other thread accessing globals is the completion worker. If
-        # we haven't started a completion worker, there's no need to lock
-        # globals.
-        if self._completion_worker_started:
+        # The only other thread accessing globals is the out-of-band worker.
+        # If we haven't started one, there's no need to lock globals.
+        if self._out_of_band_worker_started:
             with self._globals_lock:
                 yield
         else:
             yield
 
-    def start_completion_worker(
-        self, completion_queue: QueueType[CodeCompletionCommand]
+    def start_out_of_band_worker(
+        self, out_of_band_queue: QueueType[OutOfBandCommand]
     ) -> None:
-        """Must be called after context is initialized"""
-        from marimo._runtime.kernel_lifecycle import drain_stale
+        """Start the background worker for out-of-band commands.
+
+        Drains the queue on its own thread so these commands apply even while
+        a cell is executing (the control queue is blocked behind the running
+        cell). Must be called after the context is initialized.
+        """
+        from marimo._runtime.kernel_lifecycle import collapse_out_of_band
 
         def _worker() -> None:
             while True:
-                request = drain_stale(
-                    completion_queue, latest=completion_queue.get()
+                # Block for the next command, then drain and dispatch whatever
+                # else is queued in one pass (latest of each type wins).
+                commands = collapse_out_of_band(
+                    out_of_band_queue, first=out_of_band_queue.get()
                 )
-                self.code_completion(request, docstrings_limit=80)
+                # Breakpoint updates are latency-sensitive; apply them before
+                # the (potentially slow, docstring-resolving) completion
+                # command queued in the same drain pass.
+                commands.sort(
+                    key=lambda c: (
+                        0 if isinstance(c, SetBreakpointsCommand) else 1
+                    )
+                )
+                for command in commands:
+                    self.dispatch_out_of_band(command, docstrings_limit=80)
 
         threading.Thread(target=_worker, daemon=True).start()
-        self._completion_worker_started = True
+        self._out_of_band_worker_started = True
+
+    def dispatch_out_of_band(
+        self, command: OutOfBandCommand, *, docstrings_limit: int
+    ) -> None:
+        """Apply a single out-of-band command.
+
+        The one place that maps an `OutOfBandCommand` to its handler; extend
+        with a new branch when adding a member to the union.
+        """
+        from marimo._utils.assert_never import assert_never
+
+        if isinstance(command, SetBreakpointsCommand):
+            self.set_breakpoints(command)
+        elif isinstance(command, CodeCompletionCommand):
+            self.code_completion(command, docstrings_limit=docstrings_limit)
+        else:
+            # Exhaustiveness guard: a new OutOfBandCommand member without a
+            # branch here would otherwise be silently dropped by the worker.
+            assert_never(command)
+
+    def set_breakpoints(self, request: SetBreakpointsCommand) -> None:
+        """Update the live debugger's breakpoints (session-scoped).
+
+        Replaces the full set; read by the frame watcher (`DebuggerLifecycle`).
+        """
+        if self.debugger is None:
+            return
+        self.debugger.breakpoints = {
+            cell_id: set(lines)
+            for cell_id, lines in request.breakpoints.items()
+            if lines
+        }
 
     @kernel_tracer.start_as_current_span("code_completion")
     def code_completion(
@@ -2056,6 +2119,26 @@ class Kernel:
             error_title = "Function not found"
             error_message = f"Could not find function given request: {request}"
             debug(error_title, error_message)
+            # Logged at warning level so the field trigger is visible in
+            # production. The requested namespace missing from the registry is
+            # the signature of a frontend/kernel object-id desync; the set of
+            # registered namespaces lets us compare object-id (cell) prefixes
+            # to tell an unknown cell apart from a stale one. Object-ids and
+            # filenames only, never argument values.
+            LOGGER.warning(
+                "Function call not found "
+                "(pid=%s, notebook=%s, namespace=%s, function=%s, "
+                "namespace_registered=%s, registered_namespace_count=%d, "
+                "registered_namespaces=%s, child_contexts_searched=%d)",
+                os.getpid(),
+                self.app_metadata.filename,
+                request.namespace,
+                request.function_name,
+                request.namespace in ctx.function_registry.namespaces,
+                len(ctx.function_registry.namespaces),
+                sorted(ctx.function_registry.namespaces),
+                sum(1 for child in ctx.children if child.app is not None),
+            )
         elif function.cell_id is None:
             found = True
             error_title = "Function not associated with cell"
@@ -2456,7 +2539,6 @@ def _create_streams(
 
 def _install_subprocess_handlers(
     kernel: Kernel,
-    ctx: KernelRuntimeContext,
     user_config: MarimoConfig,
     interrupt_queue: QueueType[bool] | None,
 ) -> None:
@@ -2466,7 +2548,7 @@ def _install_subprocess_handlers(
 
     register_formatters(theme=user_config["display"]["theme"])
 
-    signal.signal(signal.SIGINT, handlers.construct_interrupt_handler(ctx))
+    signal.signal(signal.SIGINT, handlers.construct_interrupt_handler())
 
     if sys.platform == "win32":
         if interrupt_queue is not None:
@@ -2484,7 +2566,7 @@ def _install_subprocess_handlers(
 def launch_kernel(
     control_queue: QueueType[CommandMessage],
     set_ui_element_queue: QueueType[BatchableCommand],
-    completion_queue: QueueType[CodeCompletionCommand],
+    completion_queue: QueueType[OutOfBandCommand],
     input_queue: QueueType[str],
     stream_queue: QueueType[KernelMessage] | None,
     socket_addr: tuple[str, int] | None,
@@ -2539,18 +2621,17 @@ def launch_kernel(
                 control_queue=control_queue,
                 set_ui_element_queue=set_ui_element_queue,
                 virtual_file_storage=virtual_file_storage,
-                print_override_fn=print_override,
             )
         ) as (kernel, ctx):
             if is_edit_mode:
-                # completions only provided in edit mode
-                kernel.start_completion_worker(completion_queue)
+                # out-of-band commands are only processed in edit mode
+                kernel.start_out_of_band_worker(completion_queue)
 
             if is_subprocess:
                 # Read theme from kernel.user_config — create_kernel may have
                 # mutated it for run mode (autorun + auto_reload off).
                 _install_subprocess_handlers(
-                    kernel, ctx, kernel.user_config, interrupt_queue
+                    kernel, kernel.user_config, interrupt_queue
                 )
 
             # The control loop is asynchronous so that (a) user code can use

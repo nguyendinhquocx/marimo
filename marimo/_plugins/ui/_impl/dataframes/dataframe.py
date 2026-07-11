@@ -22,6 +22,7 @@ from marimo._plugins.ui._impl.dataframes.transforms.apply import (
 from marimo._plugins.ui._impl.dataframes.transforms.types import (
     DataFrameType,
     Transformations,
+    normalize_transforms_payload,
 )
 from marimo._plugins.ui._impl.table import (
     DownloadAsArgs,
@@ -41,6 +42,9 @@ from marimo._plugins.ui._impl.tables.utils import (
     get_table_manager,
 )
 from marimo._plugins.ui._impl.utils.dataframe import (
+    DelimitedOptions,
+    DownloadOptions,
+    JsonOptions,
     download_as,
     get_bound_name,
 )
@@ -306,7 +310,9 @@ class dataframe(UIElement[dict[str, Any], DataFrameType]):
             return self._undo(self._transform_container._original_df)
 
         try:
-            transformations = parse_raw(value, Transformations)
+            transformations = parse_raw(
+                normalize_transforms_payload(value), Transformations
+            )
             result, self._column_types_per_step = (
                 self._transform_container.apply(transformations)
             )
@@ -348,7 +354,7 @@ class dataframe(UIElement[dict[str, Any], DataFrameType]):
 
         Args:
             args (DownloadAsArgs): Arguments specifying the download format.
-                format must be one of 'csv', 'json', or 'parquet'.
+                format must be one of 'csv', 'tsv', 'json', or 'parquet'.
 
         Returns:
             DownloadAsResponse: URL and filename for the downloaded file.
@@ -364,9 +370,15 @@ class dataframe(UIElement[dict[str, Any], DataFrameType]):
         url, filename = download_as(
             manager,
             args.format,
-            csv_encoding=self._download_csv_encoding,
-            csv_separator=self._download_csv_separator,
-            json_ensure_ascii=self._download_json_ensure_ascii,
+            options=DownloadOptions(
+                delimited=DelimitedOptions(
+                    encoding=self._download_csv_encoding,
+                    separator=self._download_csv_separator,
+                ),
+                json=JsonOptions(
+                    ensure_ascii=self._download_json_ensure_ascii
+                ),
+            ),
             filename=bound_filename,
         )
         return DownloadAsResponse(url=url, filename=filename)
