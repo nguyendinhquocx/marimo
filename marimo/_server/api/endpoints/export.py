@@ -17,6 +17,7 @@ from marimo import _loggers
 from marimo._convert.common.filename import (
     get_download_filename,
     make_download_headers,
+    make_export_headers,
 )
 from marimo._dependencies.dependencies import DependencyManager
 from marimo._export.exporter import (
@@ -43,6 +44,7 @@ from marimo._schemas.export import (
     ExportAsScriptRequest,
     UpdateCellOutputsRequest,
     to_html_export_options,
+    to_markdown_export_options,
 )
 from marimo._schemas.export_options import (
     IPYNBExportOptions,
@@ -131,15 +133,10 @@ async def export_as_html(
         )
     )
 
-    if body.download:
-        headers = make_download_headers(filename)
-    else:
-        headers = {}
-
     # Download the HTML
     return HTMLResponse(
         content=html,
-        headers=headers,
+        headers=make_export_headers(filename, download=body.download),
     )
 
 
@@ -322,22 +319,20 @@ async def export_as_markdown(
     result = export_markdown(
         MarkdownExportRequest(
             notebook=app_file_manager.app.to_ir(),
-            options=MarkdownExportOptions(
+            options=to_markdown_export_options(
+                body,
                 filename=app_file_manager.filename,
                 source_filename=app_file_manager.filename,
             ),
         )
     )
 
-    if body.download:
-        headers = make_download_headers(result.download_filename)
-    else:
-        headers = {}
-
     # Download the Markdown
     return PlainTextResponse(
         content=result.text,
-        headers=headers,
+        headers=make_export_headers(
+            result.download_filename, download=body.download
+        ),
     )
 
 
@@ -387,18 +382,14 @@ async def export_as_ipynb(
         )
     )
 
-    if body.download:
-        filename = get_download_filename(
-            session.app_file_manager.filename, "ipynb"
-        )
-        headers = make_download_headers(filename)
-    else:
-        headers = {}
+    filename = get_download_filename(
+        session.app_file_manager.filename, "ipynb"
+    )
 
     # Download the IPYNB
     return PlainTextResponse(
         content=ipynb,
-        headers=headers,
+        headers=make_export_headers(filename, download=body.download),
     )
 
 
@@ -419,7 +410,7 @@ async def auto_export_as_markdown(
         content:
             application/json:
                 schema:
-                    $ref: "#/components/schemas/ExportAsMarkdownRequest"
+                    $ref: "#/components/schemas/AutoExportAsMarkdownRequest"
     responses:
         200:
             description: Export the notebook as a markdown

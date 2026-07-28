@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import asyncio
 import base64
-import json
 import signal
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeVar, cast
@@ -37,10 +36,10 @@ from marimo._runtime.commands import (
 from marimo._runtime.marimo_pdb import MarimoPdb
 from marimo._schemas.export import (
     ExportAsHTMLRequest,
+    ExportAsMarkdownRequest,
+    ExportedFile,
     to_html_export_options,
-)
-from marimo._schemas.export_options import (
-    MarkdownExportOptions,
+    to_markdown_export_options,
 )
 from marimo._server.files.os_file_system import OSFileSystem
 from marimo._server.models.files import (
@@ -395,7 +394,7 @@ class PyodideBridge:
     def export_html(self, request: str) -> str:
         parsed = self._parse(request, ExportAsHTMLRequest)
         app = self.session.app_manager.app
-        html, _filename = Exporter().export_as_html(
+        html, filename = Exporter().export_as_html(
             HTMLExportRequest(
                 filename=self.session.app_manager.filename,
                 app_code=app.to_py(),
@@ -410,17 +409,34 @@ class PyodideBridge:
                 options=to_html_export_options(parsed),
             )
         )
-        return json.dumps(html)
+        return self._dump(
+            ExportedFile(
+                contents=html,
+                filename=filename,
+                media_type="text/html; charset=utf-8",
+            )
+        )
 
     def export_markdown(self, request: str) -> str:
-        del request
+        parsed = self._parse(request, ExportAsMarkdownRequest)
+        filename = self.session.app_manager.filename
         result = export_markdown(
             MarkdownExportRequest(
                 notebook=self.session.app_manager.app.to_ir(),
-                options=MarkdownExportOptions(),
+                options=to_markdown_export_options(
+                    parsed,
+                    filename=filename,
+                    source_filename=filename,
+                ),
             )
         )
-        return json.dumps(result.text)
+        return self._dump(
+            ExportedFile(
+                contents=result.text,
+                filename=result.download_filename,
+                media_type="text/plain; charset=utf-8",
+            )
+        )
 
     def _parse(self, request: str, cls: type[T]) -> T:
         return parse_raw(request, cls)

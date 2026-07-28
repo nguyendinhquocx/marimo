@@ -3,7 +3,10 @@
 import { once } from "@/utils/once";
 import { getRuntimeManager } from "../runtime/config";
 import { API, createClientWithRuntimeManager } from "./api";
-import { waitForConnectionOpen } from "./connection";
+import {
+  waitForConnectionOpen,
+  waitForConnectionOpenIfNotebook,
+} from "./connection";
 import type { EditRequests, RunRequests } from "./types";
 
 /**
@@ -19,7 +22,7 @@ function multipartInit(formData: FormData) {
   };
 }
 
-const { handleResponse, handleResponseReturnNull } = API;
+const { handleExportResponse, handleResponse, handleResponseReturnNull } = API;
 
 export function createNetworkRequests(): EditRequests & RunRequests {
   const getClient = once(() => {
@@ -412,7 +415,7 @@ export function createNetworkRequests(): EditRequests & RunRequests {
           parseAs: "text",
           params: getParams(),
         })
-        .then(handleResponse);
+        .then(handleExportResponse);
     },
     exportAsMarkdown: async (request) => {
       return getClient()
@@ -421,7 +424,7 @@ export function createNetworkRequests(): EditRequests & RunRequests {
           parseAs: "text",
           params: getParams(),
         })
-        .then(handleResponse);
+        .then(handleExportResponse);
     },
     exportAsIPYNB: async (request) => {
       return getClient()
@@ -430,7 +433,7 @@ export function createNetworkRequests(): EditRequests & RunRequests {
           parseAs: "text",
           params: getParams(),
         })
-        .then(handleResponse);
+        .then(handleExportResponse);
     },
     exportAsPDF: async (request) => {
       return getClient()
@@ -439,7 +442,7 @@ export function createNetworkRequests(): EditRequests & RunRequests {
           parseAs: "blob",
           params: getParams(),
         })
-        .then(handleResponse);
+        .then(handleExportResponse);
     },
     autoExportAsHTML: async (request) => {
       return getClient()
@@ -489,12 +492,12 @@ export function createNetworkRequests(): EditRequests & RunRequests {
     },
     getPackageList: async () => {
       // If the sidebar is already open, it may try to load before the session has been initialized
-      await waitForConnectionOpen();
+      await waitForConnectionOpenIfNotebook();
       return getClient().GET("/api/packages/list").then(handleResponse);
     },
     getDependencyTree: async () => {
       // If the sidebar is already open, it may try to load before the session has been initialized
-      await waitForConnectionOpen();
+      await waitForConnectionOpenIfNotebook();
       return getClient().GET("/api/packages/tree").then(handleResponse);
     },
     listSecretKeys: async (request) => {
