@@ -17,6 +17,7 @@ export type CellConfig = schemas["CellConfig"];
 export type RuntimeState = schemas["CellNotification"]["status"];
 export type CodeCompletionRequest = schemas["CodeCompletionRequest"];
 export type DeleteCellRequest = schemas["DeleteCellRequest"];
+export type AutoExportAsIPYNBRequest = schemas["AutoExportAsIPYNBRequest"];
 export type AutoExportAsMarkdownRequest =
   schemas["AutoExportAsMarkdownRequest"];
 export type ExportAsHTMLRequest = schemas["ExportAsHTMLRequest"];
@@ -24,6 +25,7 @@ export type ExportAsMarkdownRequest = schemas["ExportAsMarkdownRequest"];
 export type ExportAsIPYNBRequest = schemas["ExportAsIPYNBRequest"];
 export type ExportAsScriptRequest = schemas["ExportAsScriptRequest"];
 export type ExportAsPDFRequest = schemas["ExportAsPDFRequest"];
+export type ExportAvailabilityResponse = schemas["ExportAvailabilityResponse"];
 export type UpdateCellOutputsRequest = schemas["UpdateCellOutputsRequest"];
 
 export interface ExportedFile<T extends BlobPart = BlobPart> {
@@ -214,6 +216,7 @@ export interface EditRequests {
     request: ShutdownSessionRequest,
   ) => Promise<RunningNotebooksResponse>;
   // Export requests
+  getExportAvailability: () => Promise<ExportAvailabilityResponse>;
   exportAsHTML: (request: ExportAsHTMLRequest) => Promise<ExportedFile<string>>;
   exportAsIPYNB: (
     request: ExportAsIPYNBRequest,
@@ -224,7 +227,7 @@ export interface EditRequests {
   exportAsPDF: (request: ExportAsPDFRequest) => Promise<ExportedFile<Blob>>;
   autoExportAsHTML: (request: ExportAsHTMLRequest) => Promise<null>;
   autoExportAsMarkdown: (request: AutoExportAsMarkdownRequest) => Promise<null>;
-  autoExportAsIPYNB: (request: ExportAsIPYNBRequest) => Promise<null>;
+  autoExportAsIPYNB: (request: AutoExportAsIPYNBRequest) => Promise<null>;
   updateCellOutputs: (request: UpdateCellOutputsRequest) => Promise<null>;
   // Package requests
   getPackageList: () => Promise<ListPackagesResponse>;

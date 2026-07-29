@@ -8,16 +8,19 @@ import shutil
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING
+from unittest.mock import patch
 
 import pytest
 
-from marimo import __version__
+from marimo import App, __version__
+from marimo._ast.app import InternalApp
 from marimo._convert.markdown.flavor.base import MarkdownFlavorName
 from marimo._dependencies.dependencies import DependencyManager
 from marimo._export.requests import PDFExportRequest, PDFRasterizationRequest
 from marimo._messaging.cell_output import CellChannel, CellOutput
 from marimo._messaging.notification import CellNotification
 from marimo._output.utils import uri_encode_component
+from marimo._session.model import SessionMode
 from marimo._types.ids import CellId_t, SessionId
 from marimo._utils.platform import is_windows
 from tests._server.mocks import (
@@ -42,8 +45,77 @@ HEADERS = {
 CODE = uri_encode_component("import marimo as mo")
 
 
+def _ipynb_export_app() -> InternalApp:
+    app = App()
+
+    @app.cell()
+    def result(x, y):
+        z = x + y
+        return (z,)
+
+    @app.cell()
+    def __():
+        x = 1
+        return (x,)
+
+    @app.cell()
+    def __():
+        y = 1
+        return (y,)
+
+    return InternalApp(app)
+
+
 class _CollectorNotWired(Exception):
     pass
+
+
+def test_export_availability_requires_auth(client: TestClient) -> None:
+    response = client.get("/api/export/availability")
+
+    assert response.status_code == 401
+
+
+def test_export_availability_reports_server_dependencies(
+    client: TestClient,
+) -> None:
+    get_session_manager(client).mode = SessionMode.RUN
+    with (
+        patch.object(DependencyManager.nbformat, "has", return_value=False),
+        patch.object(DependencyManager.nbconvert, "has", return_value=True),
+        patch.object(DependencyManager.playwright, "has", return_value=False),
+    ):
+        response = client.get(
+            "/api/export/availability",
+            headers=token_header(),
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "source": "server",
+        "formats": [
+            {
+                "format": "html",
+                "dependenciesAvailable": True,
+                "missingPackages": [],
+            },
+            {
+                "format": "markdown",
+                "dependenciesAvailable": True,
+                "missingPackages": [],
+            },
+            {
+                "format": "ipynb",
+                "dependenciesAvailable": False,
+                "missingPackages": ["nbformat"],
+            },
+            {
+                "format": "pdf",
+                "dependenciesAvailable": False,
+                "missingPackages": ["nbconvert[webpdf]"],
+            },
+        ],
+    }
 
 
 @with_session(SESSION_ID)
@@ -310,6 +382,91 @@ def test_export_ipynb(client: TestClient) -> None:
     assert response.headers["content-type"] == "text/plain; charset=utf-8"
 
 
+@pytest.mark.skipif(
+    not DependencyManager.nbformat.has(), reason="nbformat not installed"
+)
+@with_session(SESSION_ID)
+def test_export_ipynb_uses_requested_sort_mode(client: TestClient) -> None:
+    session = get_session_manager(client).get_session(SESSION_ID)
+    assert session
+    session.app_file_manager.app = _ipynb_export_app()
+
+    top_down = ["z = x + y", "x = 1", "y = 1"]
+    topological = ["x = 1", "y = 1", "z = x + y"]
+    cases = [
+        ({"download": False}, top_down),
+        ({"download": False, "sortMode": "top-down"}, top_down),
+        ({"download": False, "sortMode": "topological"}, topological),
+    ]
+
+    for request_body, expected_sources in cases:
+        response = client.post(
+            "/api/export/ipynb",
+            headers=HEADERS,
+            json=request_body,
+        )
+
+        assert response.status_code == 200
+        cells = json.loads(response.text)["cells"]
+        assert ["".join(cell["source"]) for cell in cells] == expected_sources
+
+
+@pytest.mark.skipif(
+    not DependencyManager.nbformat.has(), reason="nbformat not installed"
+)
+@with_session(SESSION_ID)
+def test_export_ipynb_selects_current_session_outputs(
+    client: TestClient,
+) -> None:
+    session = get_session_manager(client).get_session(SESSION_ID)
+    assert session
+    app = _ipynb_export_app()
+    session.app_file_manager.app = app
+
+    output_cell_id = next(
+        cell_data.cell_id
+        for cell_data in app.cell_manager.cell_data()
+        if cell_data.code == "x = 1"
+    )
+    session.session_view.add_notification(
+        CellNotification(
+            cell_id=output_cell_id,
+            output=CellOutput(
+                channel=CellChannel.OUTPUT,
+                mimetype="text/plain",
+                data="current output",
+            ),
+        )
+    )
+
+    current_output = [
+        {
+            "data": {"text/plain": ["current output"]},
+            "metadata": {},
+            "output_type": "display_data",
+        }
+    ]
+    cases = [
+        ({"download": False}, current_output),
+        ({"download": False, "includeOutputs": True}, current_output),
+        ({"download": False, "includeOutputs": False}, []),
+    ]
+
+    for request_body, expected_outputs in cases:
+        response = client.post(
+            "/api/export/ipynb",
+            headers=HEADERS,
+            json=request_body,
+        )
+
+        assert response.status_code == 200
+        cells = json.loads(response.text)["cells"]
+        output_cell = next(
+            cell for cell in cells if "".join(cell["source"]) == "x = 1"
+        )
+        assert output_cell["outputs"] == expected_outputs
+
+
 @with_read_session(SESSION_ID)
 def test_other_exports_dont_work_in_read(client: TestClient) -> None:
     response = client.post(
@@ -528,23 +685,31 @@ def test_auto_export_ipynb_missing_nbformat_notifies_once(
     client: TestClient, *, temp_marimo_file: str
 ) -> None:
     """Missing-nbformat alert fires at most once per session."""
-    from unittest.mock import patch
-
     session = get_session_manager(client).get_session(SESSION_ID)
     assert session
     session.app_file_manager.filename = temp_marimo_file
 
     with (
-        patch(
-            "marimo._server.api.endpoints.export.DependencyManager"
-        ) as mock_dm,
+        patch.object(
+            DependencyManager.nbformat,
+            "has",
+            return_value=False,
+        ),
         patch(
             "marimo._server.api.endpoints.export.notify_server_missing_packages"
         ) as mock_notify,
     ):
-        mock_dm.nbformat.has.return_value = False
+        # First call should notify.
+        response = client.post(
+            "/api/export/auto_export/ipynb",
+            headers=HEADERS,
+            json={"download": False},
+        )
+        assert response.status_code == 304
+        mock_notify.assert_called_once_with(session, SESSION_ID, ["nbformat"])
 
-        # First call — should notify
+        # Reset the export guard to exercise package notification deduplication.
+        session.session_view.needs_export = lambda _: True
         response = client.post(
             "/api/export/auto_export/ipynb",
             headers=HEADERS,
@@ -552,16 +717,6 @@ def test_auto_export_ipynb_missing_nbformat_notifies_once(
         )
         assert response.status_code == 304
         assert mock_notify.call_count == 1
-
-        # Second call in same session — should NOT notify again
-        session.session_view.needs_export = lambda _: True  # reset guard
-        response = client.post(
-            "/api/export/auto_export/ipynb",
-            headers=HEADERS,
-            json={"download": False},
-        )
-        assert response.status_code == 304
-        assert mock_notify.call_count == 1  # still 1, not 2
 
 
 @pytest.mark.skipif(

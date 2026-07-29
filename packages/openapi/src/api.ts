@@ -773,7 +773,7 @@ export interface paths {
       };
       requestBody?: {
         content: {
-          "application/json": components["schemas"]["ExportAsIPYNBRequest"];
+          "application/json": components["schemas"]["AutoExportAsIPYNBRequest"];
         };
       };
       responses: {
@@ -843,6 +843,41 @@ export interface paths {
         };
       };
     };
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/export/availability": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path?: never;
+        cookie?: never;
+      };
+      requestBody?: never;
+      responses: {
+        /** @description Dependency readiness for server-backed exports */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            "application/json": components["schemas"]["ExportAvailabilityResponse"];
+          };
+        };
+      };
+    };
+    put?: never;
+    post?: never;
     delete?: never;
     options?: never;
     head?: never;
@@ -3705,6 +3740,10 @@ export interface components {
     AnthropicConfig: {
       api_key?: string;
     };
+    /** AutoExportAsIPYNBRequest */
+    AutoExportAsIPYNBRequest: {
+      download: boolean;
+    };
     /** AutoExportAsMarkdownRequest */
     AutoExportAsMarkdownRequest: {
       download: boolean;
@@ -4632,6 +4671,13 @@ export interface components {
     /** ExportAsIPYNBRequest */
     ExportAsIPYNBRequest: {
       download: boolean;
+      /** @default true */
+      includeOutputs?: boolean;
+      /**
+       * @default top-down
+       * @enum {unknown}
+       */
+      sortMode?: "top-down" | "topological";
     };
     /** ExportAsMarkdownRequest */
     ExportAsMarkdownRequest: {
@@ -4662,6 +4708,19 @@ export interface components {
     /** ExportAsScriptRequest */
     ExportAsScriptRequest: {
       download: boolean;
+    };
+    /** ExportAvailabilityResponse */
+    ExportAvailabilityResponse: {
+      formats: components["schemas"]["ExportFormatAvailability"][];
+      /** @enum {unknown} */
+      source: "server";
+    };
+    /** ExportFormatAvailability */
+    ExportFormatAvailability: {
+      dependenciesAvailable: boolean;
+      /** @enum {unknown} */
+      format: "html" | "ipynb" | "markdown" | "pdf";
+      missingPackages: string[];
     };
     /** FileCopyRequest */
     FileCopyRequest: {
