@@ -116,6 +116,19 @@ describe("createNetworkRequests", () => {
       );
     });
 
+    it("exportAsScript should request a text export", async () => {
+      const requests = createNetworkRequests();
+      await requests.exportAsScript({ download: false });
+
+      expect(mockClient.POST).toHaveBeenCalledWith(
+        "/api/export/script",
+        expect.objectContaining({
+          body: { download: false },
+          parseAs: "text",
+        }),
+      );
+    });
+
     it("getEnvironmentInfo should GET /api/environment", async () => {
       const requests = createNetworkRequests();
       await requests.getEnvironmentInfo();
@@ -128,6 +141,20 @@ describe("createNetworkRequests", () => {
       await requests.getExportAvailability();
 
       expect(mockClient.GET).toHaveBeenCalledWith("/api/export/availability");
+    });
+
+    it("discoverDataSources should POST to the discovery endpoint", async () => {
+      const requests = createNetworkRequests();
+      const request = { requestId: "discovery-request" } as any;
+      await requests.discoverDataSources(request);
+
+      expect(mockClient.POST).toHaveBeenCalledWith(
+        "/api/datasources/discover",
+        expect.objectContaining({
+          body: request,
+          params: expect.anything(),
+        }),
+      );
     });
 
     it("getPackageList should not require a kernel connection", async () => {

@@ -341,6 +341,7 @@ export class IslandsPyodideBridge implements RunRequests, EditRequests {
   previewSQLTableList = throwNotImplemented;
   previewSQLSchemaList = throwNotImplemented;
   previewDataSourceConnection = throwNotImplemented;
+  discoverDataSources = throwNotImplemented;
   validateSQL = throwNotImplemented;
   openFile = throwNotImplemented;
   sendListFiles = throwNotImplemented;
@@ -358,6 +359,7 @@ export class IslandsPyodideBridge implements RunRequests, EditRequests {
   exportAsHTML = throwNotImplemented;
   exportAsIPYNB = throwNotImplemented;
   exportAsMarkdown = throwNotImplemented;
+  exportAsScript = throwNotImplemented;
   exportAsPDF = throwNotImplemented;
   autoExportAsHTML = throwNotImplemented;
   autoExportAsMarkdown = throwNotImplemented;

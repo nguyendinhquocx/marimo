@@ -267,6 +267,14 @@ export function createNetworkRequests(): EditRequests & RunRequests {
         })
         .then(handleResponseReturnNull);
     },
+    discoverDataSources: (request) => {
+      return getClient()
+        .POST("/api/datasources/discover", {
+          body: request,
+          params: getParams(),
+        })
+        .then(handleResponseReturnNull);
+    },
     validateSQL: (request) => {
       return getClient()
         .POST("/api/sql/validate", {
@@ -423,6 +431,15 @@ export function createNetworkRequests(): EditRequests & RunRequests {
     exportAsMarkdown: async (request) => {
       return getClient()
         .POST("/api/export/markdown", {
+          body: request,
+          parseAs: "text",
+          params: getParams(),
+        })
+        .then(handleExportResponse);
+    },
+    exportAsScript: async (request) => {
+      return getClient()
+        .POST("/api/export/script", {
           body: request,
           parseAs: "text",
           params: getParams(),

@@ -51,11 +51,13 @@ const ACTIONS: Record<keyof AllRequests, Action> = {
   sendRunScratchpad: "startConnection",
   saveAppConfig: "startConnection",
   saveCellConfig: "startConnection",
+  discoverDataSources: "startConnection",
 
   // Export operations start a connection
   exportAsHTML: "startConnection",
   exportAsIPYNB: "startConnection",
   exportAsMarkdown: "startConnection",
+  exportAsScript: "startConnection",
   exportAsPDF: "startConnection",
   readCode: "startConnection",
   sendCopy: "throwError",

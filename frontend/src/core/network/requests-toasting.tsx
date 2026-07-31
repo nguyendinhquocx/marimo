@@ -43,6 +43,7 @@ export function createErrorToastingRequests(
     previewSQLTableList: "Failed to fetch SQL table list",
     previewSQLSchemaList: "Failed to fetch SQL schema list",
     previewDataSourceConnection: "Failed to preview data source connection",
+    discoverDataSources: "Failed to discover data sources",
     validateSQL: "Failed to validate SQL",
     openFile: "Failed to open file",
     getUsageStats: "", // No toast
@@ -67,6 +68,7 @@ export function createErrorToastingRequests(
     exportAsHTML: "Failed to export HTML",
     exportAsIPYNB: "Failed to export ipynb",
     exportAsMarkdown: "Failed to export Markdown",
+    exportAsScript: "Failed to export Script",
     exportAsPDF: "Failed to export PDF",
     autoExportAsHTML: "", // No toast
     autoExportAsMarkdown: "", // No toast
