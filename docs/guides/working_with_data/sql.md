@@ -145,6 +145,46 @@ SELECT * FROM read_parquet('path/to/example.parquet');
 For a full list you can check out the [duckdb extensions](https://duckdb.org/docs/extensions/overview).
 You can also check out our [examples on GitHub](https://github.com/marimo-team/marimo/tree/main/examples/sql).
 
+## Refreshing SQL queries
+
+If you'd like to refresh your SQL cells automatically, you can wire a UI element into the SQL cell's dependency graph.
+
+### Periodic refresh with `mo.ui.refresh`
+
+Add a [`mo.ui.refresh`][marimo.ui.refresh] control and reference it in your SQL query. Because SQL cells use f-strings, include the refresh control in a SQL comment so it does not affect the query:
+
+```python
+refresh = mo.ui.refresh(default_interval="30s")
+refresh
+```
+
+```sql
+SELECT * FROM my_table
+-- {refresh}
+```
+
+Each time the refresh timer fires, the SQL cell re-runs. See the [refresh recipe](../../recipes.md#run-a-cell-on-a-timer) for more details.
+
+### Manual refresh with a button
+
+For on-demand refresh, add a [`mo.ui.button`][marimo.ui.button] and reference it in the cell that runs your query.
+
+In a **SQL cell**, reference the button in a comment:
+
+```python
+refresh_button = mo.ui.button(label="Refresh data")
+refresh_button
+```
+
+```sql
+SELECT * FROM my_table
+-- {refresh_button}
+```
+
+### Other UI elements
+
+SQL queries can interpolate any Python value, so dropdowns, sliders, text inputs, and other UI elements already trigger re-queries when their values change. See the [`parametrizing_sql_queries.py` example](https://github.com/marimo-team/marimo/blob/main/examples/sql/parametrizing_sql_queries.py) on GitHub.
+
 ## Escaping SQL brackets
 
 Our "SQL" cells are really just Python under the hood to keep notebooks as pure Python scripts. By default, we use `f-strings` for SQL strings, which allows for parameterized SQL like `SELECT * from table where value < {min}`.
@@ -172,33 +212,24 @@ Click the "Add Database Connection" button in your notebook to connect to Postgr
 
 #### Detecting data sources from your environment
 
-marimo detects data sources that are already configured in your
-environment and offers them as one-click additions in the connection dialog.
-Detection inspects the kernel's environment variables and/or configuration files.
+marimo scans your kernel's environment for connection details it recognizes and offers them as **Quick add** suggestions.
+Click a suggestion to insert a ready-to-run cell.
 
 <div align="center">
   <figure>
-    <img width="700" src="/_static/docs-sql-datasource-quick-add.png"/>
-    <figcaption>Quick-add a discovered data source</figcaption>
+    <img width="650" src="/_static/docs-sql-datasource-quick-add.png"/>
   </figure>
 </div>
 
-The following non-exhaustive table enumerates the environment variables and configuration files scanned for each supported source:
+| Integration | Detected from |
+| --- | --- |
+| PostgreSQL | `PGHOST`, `PGUSER`, `PGDATABASE` (plus `PGPORT`, `PGPASSWORD`) |
+| MySQL | `MYSQL_HOST`, `MYSQL_USER`, `MYSQL_DATABASE`, and `MYSQL_PASSWORD`/`MYSQL_PWD` (plus `MYSQL_TCP_PORT`) |
+| Trino | `TRINO_HOST`, `TRINO_USER`, `TRINO_CATALOG` (plus `TRINO_PORT`, `TRINO_PASSWORD`, `TRINO_SCHEMA`) |
+| PySpark (Spark Connect) | `SPARK_REMOTE` |
+| PyIceberg catalogs | `PYICEBERG_CATALOG__<name>__*` environment variables, or catalogs resolved from a `.pyiceberg.yaml` file |
 
-| Source                   | Detected when                                                                                                                    |
-| ------------------------ | -------------------------------------------------------------------------------------------------------------------------------- |
-| PostgreSQL               | `PGHOST`, `PGUSER`, and `PGDATABASE` are set (optionally `PGPORT`, `PGPASSWORD`)                                                   |
-| MySQL                    | `MYSQL_HOST`, `MYSQL_USER`, `MYSQL_DATABASE`, and a password (`MYSQL_PASSWORD` or `MYSQL_PWD`) are set (optionally `MYSQL_TCP_PORT`) |
-| Trino                    | `TRINO_HOST`, `TRINO_USER`, and `TRINO_CATALOG` are set (optionally `TRINO_PORT`, `TRINO_PASSWORD`, `TRINO_SCHEMA`)                |
-| Amazon S3                | `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` are set, or `AWS_PROFILE` is set                                                   |
-| S3-compatible storage    | As above, with a custom endpoint (`AWS_ENDPOINT_URL` or `AWS_ENDPOINT_URL_S3`), e.g. MinIO or Cloudflare R2                        |
-| PySpark (Spark Connect)  | `SPARK_REMOTE` is set                                                                                                              |
-| PyIceberg                | `PYICEBERG_CATALOG__<name>__<property>` variables define a catalog, or a `.pyiceberg.yaml` file configures one                     |
-
-PyIceberg catalogs are resolved the same way PyIceberg resolves them at
-runtime: `.pyiceberg.yaml` is searched in `PYICEBERG_HOME`, then your home
-directory, then the current directory, with environment variables taking
-precedence.
+Only the *names* of environment variables are shown in the UI — their values are never sent to the frontend.
 
 If you'd like to connect to a database that isn't supported by the UI, you can use the code method below, or submit a [feature request](https://github.com/marimo-team/marimo/issues/new?title=New%20database%20connection:&labels=enhancement&template=feature_request.yaml).
 
@@ -231,7 +262,7 @@ By default, marimo uses the [in-memory duckdb connection](https://duckdb.org/doc
     | ClickHouse                 | `clickhouse_connect`, `chdb`       |
     | CockroachDB                | `sqlalchemy`, `sqlmodel`           |
     | Databricks                 | `sqlalchemy`, `sqlmodel`, `ibis`   |
-    | dlt                        | `ibis`                             | 
+    | dlt                        | `ibis`                             |
     | Datafusion                 | `ibis`                             |
     | DuckDB                     | `duckdb`                           |
     | EXASolution                | `sqlalchemy`, `sqlmodel`, `ibis`   |
