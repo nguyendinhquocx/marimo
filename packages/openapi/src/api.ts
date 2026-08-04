@@ -906,7 +906,7 @@ export interface paths {
       };
       requestBody?: never;
       responses: {
-        /** @description Dependency readiness for server-backed exports */
+        /** @description Readiness for server-backed exports */
         200: {
           headers: {
             [name: string]: unknown;
@@ -4823,6 +4823,13 @@ export interface components {
       /** @enum {unknown} */
       format: "html" | "ipynb" | "markdown" | "pdf" | "script";
       missingPackages: string[];
+      missingSetup: components["schemas"]["ExportSetupRequirement"][];
+    };
+    /** ExportSetupRequirement */
+    ExportSetupRequirement: {
+      command: string;
+      /** @enum {unknown} */
+      name: "playwright-chromium";
     };
     /** FileCopyRequest */
     FileCopyRequest: {
@@ -7004,7 +7011,7 @@ export interface components {
      */
     StorageNamespace: {
       /** @enum {unknown} */
-      backendType: "fsspec" | "obstore";
+      backendType: "fsspec" | "huggingface" | "obstore";
       displayName: string;
       name: components["schemas"]["VariableName"];
       protocol: string;
