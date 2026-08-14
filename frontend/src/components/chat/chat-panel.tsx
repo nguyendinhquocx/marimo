@@ -36,7 +36,7 @@ import {
   SelectTrigger,
 } from "@/components/ui/select";
 import { replaceMessagesInChat } from "@/core/ai/chat-utils";
-import { useModelChange } from "@/core/ai/config";
+import { useAIConfigActions } from "@/core/ai/config";
 import { AI_SDK_UI_THROTTLE_MS } from "@/core/ai/constants";
 import { AiModelId } from "@/core/ai/ids/ids";
 import { useStagedAICellsActions } from "@/core/ai/staged-cells";
@@ -44,6 +44,7 @@ import {
   activeChatAtom,
   type Chat,
   type ChatId,
+  chatOptionsAtom,
   chatStateAtom,
   pendingAiPromptAtom,
 } from "@/core/ai/state";
@@ -91,6 +92,7 @@ import {
 } from "./chat-abort";
 import { renderUIMessage } from "./chat-display";
 import { ChatHistoryPopover } from "./chat-history-popover";
+import { CapabilitiesPopover } from "./capabilities-popover";
 import {
   type ChatMessagePart,
   convertToFileUIPart,
@@ -108,6 +110,7 @@ import {
 import { getCodes } from "@/core/codemirror/copilot/getCodes";
 import { focusInputAndMoveToEnd } from "@/core/codemirror/utils";
 import ScrollToBottomButton from "./acp/scroll-to-bottom-button";
+import { useChatControllerId } from "./use-chat-controller-id";
 
 // Default mode for the AI
 const DEFAULT_MODE = "manual";
@@ -298,7 +301,7 @@ const ChatInputFooter: React.FC<ChatInputFooterProps> = memo(
     const currentModel = ai?.models?.chat_model || DEFAULT_AI_MODEL;
     const currentProvider = AiModelId.parse(currentModel).providerId;
 
-    const { saveModeChange } = useModelChange();
+    const { saveModeChange } = useAIConfigActions();
 
     const modeOptions: {
       value: CopilotMode;
@@ -326,8 +329,9 @@ const ChatInputFooter: React.FC<ChatInputFooterProps> = memo(
       },
       {
         value: "code_mode",
-        label: "Code Mode (experimental)",
-        subtitle: "AI with access to the notebook's kernel. Use with caution.",
+        label: "Code Mode",
+        subtitle:
+          "AI with access to the notebook's kernel. Can overwrite changes.",
         Icon: CodeIcon,
       },
     ];
@@ -341,12 +345,12 @@ const ChatInputFooter: React.FC<ChatInputFooterProps> = memo(
 
     return (
       <TooltipProvider>
-        <div className="px-3 py-2 border-t border-border/20 flex flex-row flex-wrap items-center justify-between gap-1">
-          <div className="flex items-center gap-2">
+        <div className="px-3 py-2 border-t border-border/20 flex flex-wrap items-center gap-1">
+          <div className="flex flex-wrap items-center gap-1">
             <Select value={currentMode} onValueChange={saveModeChange}>
-              <SelectTrigger className="h-6 text-xs border-border shadow-none! ring-0! bg-muted hover:bg-muted/30 py-0 px-2 gap-1.5">
+              <SelectTrigger className="h-6 text-xs border-border shadow-none! ring-0! bg-muted hover:bg-muted/30 py-0 px-2 gap-1.5 shrink-0">
                 {CurrentModeIcon && <CurrentModeIcon className="h-3 w-3" />}
-                <span>{CurrentModeLabel}</span>
+                <span className="text-nowrap">{CurrentModeLabel}</span>
               </SelectTrigger>
               <SelectContent>
                 <SelectGroup>
@@ -377,13 +381,14 @@ const ChatInputFooter: React.FC<ChatInputFooterProps> = memo(
             </Select>
             <AIModelDropdown
               placeholder="Model"
-              triggerClassName="h-6 text-xs shadow-none! ring-0! bg-muted hover:bg-muted/30 rounded-sm"
+              triggerClassName="h-6 text-xs shadow-none! ring-0! bg-muted hover:bg-muted/30 rounded-sm max-w-[200px]"
               iconSize="small"
               showAddCustomModelDocs={true}
               forRole="chat"
             />
+            <CapabilitiesPopover />
           </div>
-          <div className="flex flex-row">
+          <div className="flex flex-row ml-auto">
             <AddContextButton
               handleAddContext={onAddContext}
               isLoading={isLoading}
@@ -445,8 +450,8 @@ const ChatInput: React.FC<ChatInputProps> = memo(
     });
 
     return (
-      <div className="relative shrink-0 min-h-[80px] flex flex-col border-t">
-        <div className={cn("px-2 py-3 flex-1", inputClassName)}>
+      <div className="relative shrink-0 flex flex-col border-t">
+        <div className={cn("px-2 py-1.5", inputClassName)}>
           <PromptInput
             className="max-h-[400px]"
             inputRef={inputRef}
@@ -550,6 +555,8 @@ const ChatPanelBody = () => {
   const { openModal, closeModal } = useImperativeModal();
 
   const activeChatId = activeChat?.id;
+  const { chatControllerId, renewDraftChatId } =
+    useChatControllerId(activeChatId);
   const store = useStore();
 
   const { addStagedCell } = useStagedAICellsActions();
@@ -573,7 +580,7 @@ const ChatPanelBody = () => {
     addToolApprovalResponse,
     id: chatId,
   } = useChat({
-    id: activeChatId,
+    id: chatControllerId,
     throttle: AI_SDK_UI_THROTTLE_MS,
     sendAutomaticallyWhen: ({ messages }) => hasPendingToolCalls(messages),
     messages: activeChat?.messages || [], // initial messages
@@ -598,6 +605,7 @@ const ChatPanelBody = () => {
           const completionBody = {
             uiMessages: options.messages,
             includeOtherCode: getCodes(""),
+            options: store.get(chatOptionsAtom),
           };
 
           // Call this here to ensure the value is not stale
@@ -811,6 +819,7 @@ const ChatPanelBody = () => {
   );
 
   const handleNewChat = useEvent(() => {
+    renewDraftChatId();
     setActiveChat(null);
     setInput("");
     setNewThreadInput("");
