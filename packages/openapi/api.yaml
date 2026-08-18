@@ -358,6 +358,25 @@ components:
       - bytes_freed
       title: CacheClearedNotification
       type: object
+    CacheConfig:
+      description: "Configuration for caching.\n\n    `verification` is the signature-checking\
+        \ posture; `store` is the backing\n    store, or a list of stores composed\
+        \ into a `TieredStore`."
+      properties:
+        store:
+          anyOf:
+          - items:
+              $ref: '#/components/schemas/StoreConfig'
+            type: array
+          - $ref: '#/components/schemas/StoreConfig'
+        verification:
+          enum:
+          - 'off'
+          - 'on'
+          - strict
+      required: []
+      title: CacheConfig
+      type: object
     CacheInfoNotification:
       description: "Execution cache statistics.\n\n    Attributes:\n        hits:\
         \ Cache hits.\n        misses: Cache misses.\n        time: Time spent on\
@@ -2540,6 +2559,19 @@ components:
       - msg
       title: ImportStarError
       type: object
+    InstallExportRequirementsRequest:
+      properties:
+        format:
+          enum:
+          - html
+          - ipynb
+          - markdown
+          - pdf
+          - script
+      required:
+      - format
+      title: InstallExportRequirementsRequest
+      type: object
     InstallPackagesCommand:
       description: "Install Python packages.\n\n    Installs missing packages using\
         \ the specified package manager. Triggered\n    automatically on import errors\
@@ -3509,6 +3541,8 @@ components:
       properties:
         ai:
           $ref: '#/components/schemas/AiConfig'
+        cache:
+          $ref: '#/components/schemas/CacheConfig'
         completion:
           $ref: '#/components/schemas/CompletionConfig'
         datasources:
@@ -3539,6 +3573,8 @@ components:
           $ref: '#/components/schemas/ServerConfig'
         sharing:
           $ref: '#/components/schemas/SharingConfig'
+        signing:
+          $ref: '#/components/schemas/SigningConfig'
         snippets:
           $ref: '#/components/schemas/SnippetsConfig'
         venv:
@@ -5146,6 +5182,23 @@ components:
       - sessionId
       title: ShutdownSessionRequest
       type: object
+    SigningConfig:
+      description: "Cache-signing trust and identity.\n\n    `trusted_signers` maps\
+        \ a key fingerprint (`\"SHA256:<base64>\"`) to an\n    advisory label. Trusting\
+        \ a key allows arbitrary code execution from its\n    holder on this machine\
+        \ \u2014 a cache restore is `pickle.loads` \u2014 so there is no\n    lesser\
+        \ cache-only grant. `private_key_path` is this machine's signing\n    identity;\
+        \ it is never serialized to the frontend."
+      properties:
+        private_key_path:
+          type: string
+        trusted_signers:
+          additionalProperties:
+            type: string
+          type: object
+      required: []
+      title: SigningConfig
+      type: object
     Snippet:
       properties:
         sections:
@@ -5566,7 +5619,7 @@ components:
       title: StorageNamespacesNotification
       type: object
     StoreConfig:
-      description: Configuration for cache stores.
+      description: Configuration for a single cache store.
       properties:
         args:
           type: object
@@ -6724,6 +6777,26 @@ paths:
           description: File must be saved before downloading
         500:
           description: Export failed or dependencies missing
+  /api/export/requirements/install:
+    post:
+      parameters:
+      - in: header
+        name: Marimo-Session-Id
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InstallExportRequirementsRequest'
+      responses:
+        200:
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExportAvailabilityResponse'
+          description: Updated readiness for server-backed exports
   /api/export/script:
     post:
       parameters:
