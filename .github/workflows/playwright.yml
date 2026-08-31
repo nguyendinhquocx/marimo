@@ -49,10 +49,6 @@ jobs:
     steps:
       - name: ⬇️ Checkout repo
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-
-      - name: 🔧 Trust Git workspace
-        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
-
       - name: Write TOML
         run: |
           echo "[runtime]" > .marimo.toml
@@ -64,11 +60,6 @@ jobs:
       - name: Update pyproject.toml
         run: |
           sed -i 's/auto_instantiate = false/auto_instantiate = true/' pyproject.toml
-
-      - name: 🛠️ Install build tools
-        run: |
-          apt-get update
-          apt-get install --yes --no-install-recommends make
 
       - name: 🔐 Fetch Doppler secrets
         # Skip on PRs from forks: id-token write is downgraded to read, so OIDC fails.
@@ -98,10 +89,9 @@ jobs:
         run: |
           echo "MARIMO_VERSION=$(uv run marimo --version)" >> $GITHUB_ENV
 
-      - name: 🎭 Verify Playwright image version
+      - name: 🎭 Get installed Playwright version
+        id: playwright-version
         working-directory: ./frontend
-        env:
-          EXPECTED_PLAYWRIGHT_VERSION: 1.62.1
         run: |
           PLAYWRIGHT_VERSION=$(pnpm ls @playwright/test | grep @playwright | sed 's/.*@//')
           echo "Playwright's Version: $PLAYWRIGHT_VERSION"
