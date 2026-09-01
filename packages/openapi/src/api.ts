@@ -3819,7 +3819,7 @@ export interface components {
      *
      *         **Keys.**
      *
-     *         - `api_key`: the Anthropic API key
+     *         - `api_key`: the Anthropic API key or an `env:` reference
      */
     AnthropicConfig: {
       api_key?: string;
@@ -5149,7 +5149,7 @@ export interface components {
      *
      *         **Keys.**
      *
-     *         - `api_key`: the GitHub API token
+     *         - `api_key`: the GitHub API token or an `env:` reference
      *         - `base_url`: the base URL for the API
      *         - `copilot_settings`: configuration settings for GitHub Copilot LSP.
      *             Supports settings like `http` (proxy configuration), `telemetry`,
@@ -5166,7 +5166,7 @@ export interface components {
      *
      *         **Keys.**
      *
-     *         - `api_key`: the Google AI API key
+     *         - `api_key`: the Google AI API key or an `env:` reference
      */
     GoogleAiConfig: {
       api_key?: string;
@@ -5245,12 +5245,17 @@ export interface components {
      *             manager: Package manager to use ('pip', 'conda', 'uv', etc.).
      *             versions: Package names mapped to version specifiers. Empty version
      *                       means install latest.
+     *             index_urls: Alternative package index URLs. Primary index first,
+     *                         then extras. Honored by backends that support custom
+     *                         indexes (currently micropip); other backends ignore it.
      *             source: Where to install. "kernel" (default) dispatches to the kernel
      *                     subprocess; "server" installs directly into the server's Python
      *                     environment (sys.executable), used when the server itself needs
      *                     a package (e.g. nbformat for IPYNB auto-export in sandbox mode).
      */
     InstallPackagesCommand: {
+      /** @default [] */
+      indexUrls?: string[];
       manager: string;
       /**
        * @default kernel
@@ -5265,6 +5270,8 @@ export interface components {
     };
     /** InstallPackagesRequest */
     InstallPackagesRequest: {
+      /** @default [] */
+      indexUrls?: string[];
       manager: string;
       /**
        * @default kernel
@@ -6151,7 +6158,7 @@ export interface components {
      *
      *         **Keys.**
      *
-     *         - `api_key`: the OpenAI API key
+     *         - `api_key`: the OpenAI API key or an `env:` reference
      *         - `base_url`: the base URL for the API
      *         - `project`: the project ID for the OpenAI API
      *         - `ssl_verify` : Boolean argument for httpx passed to open ai client. httpx defaults to true, but some use cases to let users override to False in some testing scenarios
