@@ -4,7 +4,7 @@ build-backend = "uv_build"
 
 [project]
 name = "marimo"
-version = "0.24.0"
+version = "0.24.1"
 description = "A library for making reactive notebooks and apps"
 # We try to keep dependencies to a minimum, to avoid conflicts with
 # user environments; we need a very compelling reason for each dependency added.
@@ -379,7 +379,6 @@ ignore = [
     "S112", # `try`-`except`-`continue`
     "PLW1509", # `subprocess` `preexec_fn` argument
     "DTZ002", # `datetime.today()` called without tz
-    "PLE0704", # Misplaced bare `raise`
     "D421", # Property docstring should not start with a verb (preview rule)
 
     # Restored to Ruff's default rule set in 0.16.6; enable incrementally
@@ -393,7 +392,6 @@ ignore = [
     "FURB110", # Replace ternary with an `or` expression
     "RUF036", # `None` is not last in a union
     "FURB113", # Repeated `append` calls
-    "RUF075", # Fallible context manager
     "FURB171", # Single-item membership test
     "NPY002", # Legacy NumPy random API
     "RUF100", # Unused `noqa` directive
