@@ -4,7 +4,7 @@ build-backend = "uv_build"
 
 [project]
 name = "marimo"
-version = "0.24.1"
+version = "0.24.2"
 description = "A library for making reactive notebooks and apps"
 # We try to keep dependencies to a minimum, to avoid conflicts with
 # user environments; we need a very compelling reason for each dependency added.
@@ -93,9 +93,9 @@ sql = [
     "sqlglot[c]>=26.8.0"       # SQL cells parsing;
 ]
 
-# For per-notebook sandboxed kernels
+# For per-notebook sandboxed kernels. pyzmq moved to the core
+# dependencies; the extra remains for the uv wheel.
 sandbox = [
-    "pyzmq>=27.1.0",           # IPC communication for sandbox kernels
     "uv>=0.9.21",              # for sandbox management and local html-wasm exports
 ]
 
@@ -367,7 +367,6 @@ ignore = [
     "SIM117", # Use a single `with` statement with multiple contexts instead of nested `with` statements
     "RUF012", # Mutable class default
     "S102", # Use of `exec`
-    "PYI036", # Bad `sys.exit` annotation
     "DTZ005", # `datetime.now()` called without `tzinfo`
     "SIM115", # Open file without context handler
     "DTZ006", # `datetime.fromtimestamp()` called without `tzinfo`
@@ -550,6 +549,7 @@ markers = [
     "unit: marks tests as unit tests",
     "flaky: marks tests that are known to be flaky",
     "requires(dep1, dep2, ...): requires one or more dependencies to be installed",
+    "network: requires internet access to package indexes (deselect with '-m \"not network\"')",
 ]
 
 [tool.coverage.run]

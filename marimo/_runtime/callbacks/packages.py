@@ -15,6 +15,10 @@ from marimo._messaging.notification import (
 )
 from marimo._messaging.notification_utils import broadcast_notification
 from marimo._runtime.commands import InstallPackagesCommand
+from marimo._runtime.context.types import (
+    ContextNotInitializedError,
+    get_context,
+)
 from marimo._runtime.packages.import_error_extractors import (
     extract_missing_module_from_cause_chain,
     try_extract_packages_from_import_error_message,
@@ -92,17 +96,42 @@ class PackagesCallbacks:
         broadcast_notification(CompletedRunNotification())
 
     def update_package_manager(self, package_manager: str) -> None:
+        if GLOBAL_SETTINGS.SANDBOX_MODE is not None:
+            from marimo._environments.backends import current_backend
+            from marimo._environments.sandbox import NotebookSandbox
+            from marimo._runtime.packages.sandbox_package_manager import (
+                SandboxPackageManager,
+            )
+
+            if not isinstance(self.package_manager, SandboxPackageManager):
+                self.package_manager = SandboxPackageManager(
+                    NotebookSandbox.from_running_process(
+                        self._kernel.app_metadata.filename, current_backend()
+                    )
+                )
+            return
+
         if (
             self.package_manager is None
             or package_manager != self.package_manager.name
         ):
-            self.package_manager = create_package_manager(package_manager)
+            self.package_manager = create_package_manager(
+                package_manager,
+            )
 
             # All marimo notebooks depend on the marimo package; if the
             # notebook already has marimo as a dependency, or an optional
             # dependency group with marimo, such as marimo[sql], this is a
             # NOOP.
             self._maybe_add_marimo_to_script_metadata()
+
+    def rename_file(self, filename: str) -> None:
+        from marimo._runtime.packages.sandbox_package_manager import (
+            SandboxPackageManager,
+        )
+
+        if isinstance(self.package_manager, SandboxPackageManager):
+            self.package_manager.rebind(filename)
 
     def send_missing_packages_alert(self, missing_packages: set[str]) -> None:
         if self.package_manager is None:
@@ -230,9 +259,14 @@ class PackagesCallbacks:
         assert self.package_manager is not None, (
             "Cannot install packages without a package manager"
         )
-        if request.manager != self.package_manager.name:
+        if (
+            request.manager != self.package_manager.name
+            and GLOBAL_SETTINGS.SANDBOX_MODE is None
+        ):
             # Swap out the package manager
-            self.package_manager = create_package_manager(request.manager)
+            self.package_manager = create_package_manager(
+                request.manager,
+            )
 
         if not self.package_manager.is_manager_installed():
             self.package_manager.alert_not_installed()
@@ -270,6 +304,14 @@ class PackagesCallbacks:
         )
 
         def create_log_callback(pkg: str) -> LogCallback:
+            # Bind the stream now, on the kernel thread: the callback
+            # fires from worker threads, which do not carry the kernel's
+            # thread-local context, so a bare broadcast would be dropped.
+            try:
+                stream = get_context().stream
+            except ContextNotInitializedError:
+                stream = None
+
             def log_callback(log_line: str) -> None:
                 broadcast_notification(
                     InstallingPackageAlertNotification(
@@ -278,6 +320,7 @@ class PackagesCallbacks:
                         log_status="append",
                         source=request.source,
                     ),
+                    stream=stream,
                 )
 
             return log_callback
@@ -328,13 +371,22 @@ class PackagesCallbacks:
                     ),
                 )
             else:
-                package_statuses[pkg] = "failed"
+                restart_required = self.package_manager.restart_required
+                package_statuses[pkg] = (
+                    "restart-required" if restart_required else "failed"
+                )
                 mod = self.package_manager.package_to_module(pkg)
                 self._kernel.module_registry.excluded_modules.add(mod)
                 broadcast_notification(
                     InstallingPackageAlertNotification(
                         packages=package_statuses,
-                        logs={pkg: f"Failed to install {pkg}\n"},
+                        logs={
+                            pkg: (
+                                f"Dependency changes saved for {pkg}; restart the kernel to use them.\n"
+                                if restart_required
+                                else f"Failed to install {pkg}\n"
+                            )
+                        },
                         log_status="done",
                         source=request.source,
                     ),

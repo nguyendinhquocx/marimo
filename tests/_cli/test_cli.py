@@ -407,50 +407,6 @@ def test_cli_missing_argument_uses_compact_error() -> None:
     assert "Options:" not in result.output
 
 
-def test_cli_edit_sandbox_missing_zmq_skips_update_check() -> None:
-    from click.testing import CliRunner
-
-    from marimo._cli.cli import main
-
-    runner = CliRunner()
-    captured_packages: dict[str, str | list[str]] = {}
-
-    def _capture_install_commands(
-        packages: str | list[str] | tuple[str, ...],
-    ) -> list[str]:
-        captured_packages["value"] = (
-            packages if isinstance(packages, str) else list(packages)
-        )
-        return ["python -m pip install 'marimo[sandbox]'"]
-
-    with (
-        patch(
-            "marimo._cli.cli.prompt_run_in_docker_container",
-            return_value=False,
-        ),
-        patch(
-            "marimo._dependencies.dependencies.DependencyManager.zmq.has",
-            return_value=False,
-        ),
-        patch(
-            "marimo._cli.errors.get_install_commands",
-            side_effect=_capture_install_commands,
-        ),
-        patch("marimo._cli.cli.check_for_updates") as mock_check_for_updates,
-    ):
-        result = runner.invoke(main, ["edit", "--sandbox"])
-
-    assert result.exit_code == 1
-    mock_check_for_updates.assert_not_called()
-    assert captured_packages["value"] == "marimo[sandbox]"
-    assert (
-        "pyzmq is required when running the marimo edit server on a directory with --sandbox."
-        in result.output
-    )
-    assert "python -m pip install 'marimo[sandbox]'" in result.output
-    assert "'marimo[sandbox]' pyzmq" not in result.output
-
-
 def test_cli_edit_checks_for_updates_after_preflight() -> None:
     from click.testing import CliRunner
 
@@ -1380,6 +1336,59 @@ def test_cli_sandbox_edit_no_prompt(temp_marimo_file: str) -> None:
     _check_contents(p, b"edit", contents)
 
 
+@pytest.mark.parametrize("command", ["edit", "run"])
+@pytest.mark.parametrize(
+    ("option", "backend"), [("--sandbox=pixi", "pixi"), ("--sandbox", "uv")]
+)
+@pytest.mark.parametrize("directory", ["pixi", "uv"])
+def test_cli_sandbox_records_backend_and_preserves_paths(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    command: str,
+    option: str,
+    backend: str,
+    directory: str,
+) -> None:
+    """Kernel launches read the backend from GLOBAL_SETTINGS; `run` must
+    record it or `run --sandbox=pixi` launches uv kernels."""
+    from marimo._cli.sandbox import SandboxMode
+    from marimo._config.settings import GLOBAL_SETTINGS
+
+    monkeypatch.chdir(tmp_path)
+    notebook_dir = tmp_path / directory
+    notebook_dir.mkdir()
+    (notebook_dir / "nb.py").write_text(
+        codegen.generate_filecontents(
+            codes=["import marimo as mo"],
+            names=["one"],
+            cell_configs=[CellConfig()],
+        ),
+        encoding="utf-8",
+    )
+    runner = CliRunner()
+    captured: dict[str, object] = {}
+
+    def _capture_start(**kwargs: object) -> None:
+        captured["backend"] = GLOBAL_SETTINGS.SANDBOX_BACKEND
+        captured["sandbox_mode"] = kwargs["sandbox_mode"]
+
+    with (
+        patch.dict(os.environ),
+        patch.object(GLOBAL_SETTINGS, "SANDBOX_BACKEND", None),
+        patch.object(GLOBAL_SETTINGS, "SANDBOX_MODE", None),
+        patch.object(GLOBAL_SETTINGS, "MANAGE_SCRIPT_METADATA", False),
+        patch("marimo._cli.cli.start", side_effect=_capture_start),
+    ):
+        result = runner.invoke(
+            cli_main,
+            [command, option, directory, "--headless"],
+        )
+
+    assert result.exit_code == 0, result.output
+    assert captured["sandbox_mode"] is SandboxMode.MULTI
+    assert captured["backend"] == backend
+
+
 @pytest.mark.skipif(not HAS_UV, reason="uv is required for sandbox tests")
 def test_cli_sandbox_edit_new_file() -> None:
     with tempfile.TemporaryDirectory() as d:
@@ -1388,15 +1397,16 @@ def test_cli_sandbox_edit_new_file() -> None:
         with patch(
             "marimo._cli.sandbox.run_in_sandbox"
         ) as mock_run_in_sandbox:
+            mock_run_in_sandbox.return_value = 0
             result = runner.invoke(
                 cli_main,
-                ["edit", path, "--headless", "--no-token", "--sandbox"],
+                ["edit", "--sandbox", path, "--headless", "--no-token"],
             )
         assert result.exit_code == 0, result.output
         mock_run_in_sandbox.assert_called_once()
         call_kwargs = mock_run_in_sandbox.call_args
         assert call_kwargs.kwargs["name"] == path
-        assert call_kwargs.kwargs["additional_features"] == ["lsp"]
+        assert call_kwargs.kwargs["extras"] == ["lsp"]
 
 
 @pytest.mark.skipif(
@@ -1921,6 +1931,7 @@ def test_cli_with_custom_pyproject_config_no_file(tmp_path: Path) -> None:
         with patch(
             "marimo._cli.sandbox.run_in_sandbox"
         ) as mock_run_in_sandbox:
+            mock_run_in_sandbox.return_value = 0
             result = runner.invoke(
                 cli_main,
                 ["new", "--sandbox", "--headless", "--no-token"],
@@ -1930,7 +1941,7 @@ def test_cli_with_custom_pyproject_config_no_file(tmp_path: Path) -> None:
     assert result.exit_code == 0, result.output
     mock_run_in_sandbox.assert_called_once()
     call_kwargs = mock_run_in_sandbox.call_args
-    assert call_kwargs.kwargs["additional_features"] == ["lsp"]
+    assert call_kwargs.kwargs["extras"] == ["lsp"]
 
 
 # shell-completion has 1 input (value of $SHELL) & 3 outputs (return code, stdout, & stderr)
