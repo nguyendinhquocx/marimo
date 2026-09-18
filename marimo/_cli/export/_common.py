@@ -1,6 +1,7 @@
 # Copyright 2026 Marimo. All rights reserved.
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import json
 import signal
@@ -50,23 +51,51 @@ def collect_notebooks(paths: Iterable[Path]) -> list[MarimoPath]:
 def _export_termination_signals() -> Iterator[None]:
     """Let termination unwind the runner so its isolated child is reaped."""
     previous = {}
+    loop = asyncio.get_running_loop()
+    task = asyncio.current_task()
+    termination_signal: int | None = None
+    active = True
+
+    def cancel_export() -> None:
+        if active and task is not None:
+            task.cancel()
 
     def terminate(signum: int, _frame: object) -> None:
-        raise SystemExit(128 + signum)
+        nonlocal termination_signal
+        if termination_signal is not None:
+            return
+        termination_signal = signum
+        # Deliver cancellation at an await, after Popen has returned ownership
+        # of the child. Raising here can interrupt its constructor and leak it.
+        loop.call_soon_threadsafe(cancel_export)
 
     try:
         if threading.current_thread() is threading.main_thread():
-            for name in ("SIGTERM", "SIGHUP"):
+            for name in ("SIGINT", "SIGTERM", "SIGHUP"):
                 signum = getattr(signal, name, None)
+                # Python 3.10 raises KeyboardInterrupt synchronously; defer it
+                # past Popen just like termination. Python 3.11+ asyncio.run
+                # already installs a cancelling handler, which we preserve.
+                default_handler = (
+                    signal.default_int_handler
+                    if name == "SIGINT"
+                    else signal.SIG_DFL
+                )
                 if (
                     signum is not None
-                    and signal.getsignal(signum) == signal.SIG_DFL
+                    and signal.getsignal(signum) == default_handler
                 ):
                     previous[signum] = signal.signal(signum, terminate)
         yield
     finally:
+        active = False
         for signum, handler in previous.items():
             signal.signal(signum, handler)
+        # The command may finish before queued cancellation is delivered.
+        if termination_signal == signal.SIGINT:
+            raise KeyboardInterrupt from None
+        if termination_signal is not None:
+            raise SystemExit(128 + termination_signal) from None
 
 
 async def run_python_subprocess(
