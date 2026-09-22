@@ -104,7 +104,7 @@ sandbox = [
 recommended = [
     "marimo[sql]",
     "marimo[sandbox]",                           # For `marimo edit --sandbox DIRECTORY`
-    "marimo-lens>=0.1.2",                        # Inspect and select notebook outputs
+    "marimo-lens>=0.2.0",                        # Inspect and select notebook outputs
     "cryptography>=42.0.0",                      # Ed25519 signing of persistent cache manifests
     "altair>=5.4.0",                             # Plotting in datasource viewer
     "pydantic-ai-slim[openai]>=1.107.0,<3.0.0",  # AI features
@@ -308,7 +308,7 @@ docs = [
 # Mirror CI's dependency window (UV_EXCLUDE_NEWER in .github/workflows) so local
 # resolution reproduces what CI resolves at setup time, including the ruff version.
 exclude-newer = "7 days"
-exclude-newer-package = { marimo-lens = false }
+exclude-newer-package = { agent-plugins = false, marimo-lens = false }
 
 [tool.uv.sources]
 marimo_docs = { path = "./docs", editable = true }
@@ -370,14 +370,12 @@ ignore = [
     "RUF012", # Mutable class default
     "S102", # Use of `exec`
     "DTZ005", # `datetime.now()` called without `tzinfo`
-    "SIM115", # Open file without context handler
     "DTZ006", # `datetime.fromtimestamp()` called without `tzinfo`
     "DTZ007", # `datetime.strptime()` called without zone
     "DTZ011", # `date.today()` used
     "UP007", # Use `X | Y` for type annotations
     "DTZ012", # `date.fromtimestamp()` called without `tzinfo`
     "DTZ901", # `datetime.min` / `datetime.max` used
-    "DTZ002", # `datetime.today()` called without tz
     "D421", # Property docstring should not start with a verb (preview rule)
 
     # Restored to Ruff's default rule set in 0.16.6; enable incrementally
