@@ -55,6 +55,7 @@ from marimo._session.notebook import AppFileManager
 from marimo._session.session import (
     SessionImpl,
 )
+from marimo._session.startup import SessionStartup
 from marimo._session.state.session_view import SessionView
 from marimo._types.ids import ConsumerId, SessionId
 from marimo._utils.marimo_path import MarimoPath
@@ -358,6 +359,7 @@ async def test_session() -> None:
 
     # Instantiate a Session
     session = SessionImpl(
+        session_view=SessionView(),
         initialization_id=session_id,
         session_consumer=session_consumer,
         kernel_manager=kernel_manager,
@@ -390,6 +392,7 @@ async def test_session() -> None:
 def test_sessions_for_same_file_have_distinct_stable_ids() -> None:
     sessions = [
         SessionImpl(
+            session_view=SessionView(),
             initialization_id="notebook.py",
             session_consumer=MagicMock(),
             kernel_manager=MagicMock(spec=KernelManagerImpl),
@@ -425,6 +428,7 @@ async def test_session_disconnect_reconnect() -> None:
 
     # Instantiate a Session
     session = SessionImpl(
+        session_view=SessionView(),
         initialization_id=session_id,
         session_consumer=session_consumer,
         kernel_manager=kernel_manager,
@@ -484,6 +488,7 @@ async def test_session_with_kiosk_consumers() -> None:
 
     # Instantiate a Session
     session = SessionImpl(
+        session_view=SessionView(),
         initialization_id=session_id,
         session_consumer=session_consumer,
         kernel_manager=kernel_manager,
@@ -1092,7 +1097,9 @@ async def test_session_with_script_config_overrides(
     app_file_manager = AppFileManager(filename=str(tmp_file))
 
     # Create session with the file that has script config
+    startup = SessionStartup()
     session = await SessionImpl.create(
+        startup=startup,
         initialization_id="test_id",
         session_consumer=session_consumer,
         mode=SessionMode.RUN,
@@ -1104,6 +1111,8 @@ async def test_session_with_script_config_overrides(
         ttl_seconds=None,
         auto_instantiate=True,
     )
+
+    assert session.session_view is startup.view
 
     # Verify that the session's config is affected by the script config
     assert (
@@ -1118,6 +1127,53 @@ async def test_session_with_script_config_overrides(
 
     # Cleanup
     session.close()
+
+
+async def test_session_script_dotenv_reaches_the_kernel_config(
+    tmp_path: Path,
+) -> None:
+    # runtime.dotenv is masked to [] when read with secrets hidden. If the
+    # session layered that masked snapshot on as an override, the empty list
+    # would win the unmasked merge the kernel reads, so a script-level dotenv
+    # would load nothing.
+    session_consumer = MagicMock()
+    session_consumer.connection_state.return_value = ConnectionState.OPEN
+    tmp_file = tmp_path / "nb.py"
+    tmp_file.write_text(
+        dedent(
+            """
+        # /// script
+        # [tool.marimo.runtime]
+        # dotenv = [".env", ".env.local"]
+        # ///
+        """
+        )
+    )
+    session = await SessionImpl.create(
+        startup=SessionStartup(),
+        initialization_id="test_id",
+        session_consumer=session_consumer,
+        mode=SessionMode.RUN,
+        app_metadata=app_metadata,
+        app_file_manager=AppFileManager(filename=str(tmp_file)),
+        config_manager=get_default_config_manager(current_path=str(tmp_file)),
+        virtual_file_storage="in_memory",
+        redirect_console_to_browser=False,
+        ttl_seconds=None,
+        auto_instantiate=True,
+    )
+    try:
+        kernel_config = session._kernel_manager.config_manager.get_config(
+            hide_secrets=False
+        )
+        assert kernel_config["runtime"]["dotenv"] == [
+            str(tmp_path / ".env"),
+            str(tmp_path / ".env.local"),
+        ]
+        masked = session.config_manager.get_config()
+        assert masked["runtime"]["dotenv"] == []
+    finally:
+        session.close()
 
 
 async def test_caching_extension_respects_mode_and_config() -> None:
@@ -1146,6 +1202,7 @@ async def test_caching_extension_respects_mode_and_config() -> None:
                 }
             )
         return await SessionImpl.create(
+            startup=SessionStartup(),
             initialization_id="test_session",
             session_consumer=session_consumer,
             mode=mode,
