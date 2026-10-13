@@ -45,6 +45,17 @@ _Body = TypeVar("_Body", bound=msgspec.Struct)
 PROBLEM_TYPE_PREFIX = "tag:marimo.io,2026:host/"
 """Prefix for host protocol problem types."""
 
+ATTACHMENT_IDENTITY = "Marimo-Attachment-Identity"
+ATTACHMENT_KIND = "Marimo-Attachment-Kind"
+ATTACHMENT_NAME = "Marimo-Attachment-Name"
+
+_ATTACHMENT_HEADERS = {
+    "identity": ATTACHMENT_IDENTITY,
+    "kind": ATTACHMENT_KIND,
+    "name": ATTACHMENT_NAME,
+}
+"""Attachment fields and the request headers that supply them."""
+
 PING = b": ping\n\n"
 PING_SECONDS = 15.0
 
@@ -148,7 +159,7 @@ def _mutation(operation: str) -> Callable[[_Endpoint], _Endpoint]:
                 )
             digest = hashlib.sha256(await request.body()).hexdigest()
             fingerprint = f"{request.method} {request.url.path} {digest}"
-            remembered = context.replies.get(key)
+            remembered = context.remembered(key)
             if remembered is not None:
                 if remembered.fingerprint != fingerprint:
                     return problem(
@@ -165,24 +176,37 @@ def _mutation(operation: str) -> Callable[[_Endpoint], _Endpoint]:
             mutation = CachedMutation(fingerprint, task)
             context.replies[key] = mutation
             unsubscribe: Callable[[], None] | None = None
+            lifecycle_accepted: Callable[[Response], None] | None = None
             if operation == "runtime.run" and request.method == "POST":
-                # Retain the last run state even after a restart removes it
-                # from the notebook. Replaying the key must never execute again.
+                # The receipt outlives results without retaining their payloads.
                 def updated(event: Event) -> None:
                     if isinstance(event.data, protocol.RunMessage):
                         run = event.data.run
-                        if run.id == key:
+                        if event.data.request_id == key:
                             mutation.run = run
                             if (
                                 run.status == "completed"
                                 and unsubscribe is not None
                             ):
+                                context.settle(mutation)
                                 unsubscribe()
 
                 unsubscribe = context.bridge.host.subscribe(
                     updated,
                     notebook_id=request.path_params["id"],
                     types={"run"},
+                )
+            elif operation in {
+                "runtime.start",
+                "runtime.stop",
+                "runtime.restart",
+            }:
+                lifecycle_accepted, unsubscribe = _watch_lifecycle(
+                    context,
+                    mutation,
+                    operation=operation,
+                    notebook_id=request.path_params["id"],
+                    request_id=key,
                 )
 
             def completed(task: asyncio.Task[Response]) -> None:
@@ -194,6 +218,12 @@ def _mutation(operation: str) -> Callable[[_Endpoint], _Endpoint]:
                     context.replies.pop(key, None)
                     if unsubscribe is not None:
                         unsubscribe()
+                elif lifecycle_accepted is not None:
+                    lifecycle_accepted(task.result())
+                elif mutation.expires_at is None and (
+                    mutation.run is None or mutation.run.status == "completed"
+                ):
+                    context.settle(mutation)
 
             task.add_done_callback(completed)
             # A disconnected waiter must not cancel a shared mutation.
@@ -202,6 +232,76 @@ def _mutation(operation: str) -> Callable[[_Endpoint], _Endpoint]:
         return handle
 
     return decorate
+
+
+def _watch_lifecycle(
+    context: HostContext,
+    mutation: CachedMutation,
+    *,
+    operation: str,
+    notebook_id: str,
+    request_id: str,
+) -> tuple[Callable[[Response], None], Callable[[], None]]:
+    runtime_id: protocol.RuntimeId | None = None
+    previous_id: protocol.RuntimeId | None = None
+    early: list[Event] = []
+
+    def settle() -> None:
+        context.settle(mutation)
+        unsubscribe()
+
+    def updated(event: Event) -> None:
+        nonlocal previous_id
+        if mutation.expires_at is not None:
+            return
+        if runtime_id is None:
+            # A backend can finish synchronously, before the response exists.
+            early.append(event)
+            return
+        if event.name == "notebook.removed":
+            settle()
+        elif isinstance(event.data, protocol.RuntimeMessage):
+            runtime = event.data.runtime
+            if (
+                operation == "runtime.restart"
+                and event.data.request_id == request_id
+                and runtime.status == "terminating"
+                and runtime.id != runtime_id
+            ):
+                previous_id = runtime.id
+            if (
+                operation != "runtime.stop"
+                and runtime.id == runtime_id
+                and runtime.status in ("running", "failed")
+            ):
+                settle()
+        elif event.name == "runtime.removed" and isinstance(
+            event.data, protocol.RemovedMessage
+        ):
+            if event.data.id == runtime_id or (
+                event.data.id == previous_id
+                and event.data.request_id != request_id
+            ):
+                # A later stop can cancel a restart before its replacement starts.
+                settle()
+
+    unsubscribe = context.bridge.host.subscribe(
+        updated, notebook_id=notebook_id, types={"runtime", "notebook"}
+    )
+
+    def accepted(response: Response) -> None:
+        nonlocal runtime_id
+        if response.status_code == 202:
+            runtime_id = msgspec.json.decode(
+                response.body, type=protocol.Runtime
+            ).id
+            for event in early:
+                updated(event)
+        else:
+            settle()
+        early.clear()
+
+    return accepted, unsubscribe
 
 
 async def _execute_mutation(endpoint: _Endpoint, request: Request) -> Response:
@@ -266,7 +366,14 @@ async def _notebook_events(request: Request) -> Response:
     run_id = request.query_params.get("run_id")
     if run_id == "":
         return problem(400, "invalid-request", "run_id must not be empty")
-    attachment = notebook.attach()
+    try:
+        attachment = notebook.attach(
+            identity=request.headers.get(ATTACHMENT_IDENTITY),
+            kind=request.headers.get(ATTACHMENT_KIND),
+            name=request.headers.get(ATTACHMENT_NAME),
+        )
+    except msgspec.ValidationError as e:
+        return problem(400, "invalid-request", _attachment_problem(e))
     return _stream(
         context,
         cursor,
@@ -291,6 +398,15 @@ def _types(request: Request) -> set[str] | None:
     if not asked:
         return None
     return {kind for kind in asked.split(",") if kind}
+
+
+def _attachment_problem(error: msgspec.ValidationError) -> str:
+    """Name the request header behind a rejected attachment field."""
+    detail = str(error)
+    for field, header in _ATTACHMENT_HEADERS.items():
+        if detail.endswith(f"`$.{field}`"):
+            return f"{header} is invalid"
+    return "attachment headers are invalid"
 
 
 def _stream(
@@ -485,6 +601,10 @@ async def _run(request: Request) -> Response:
     key = request.headers["Idempotency-Key"]
     notebook = _notebook(request)
     body = await _decode(request, protocol.RunRequest)
+    if body.code is msgspec.UNSET or body.cells is not msgspec.UNSET:
+        return problem(
+            400, "invalid-request", "This host requires scratch code"
+        )
     started = notebook.run(body.code, request_id=key)
     return _reply(202, started)
 
