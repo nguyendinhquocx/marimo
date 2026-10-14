@@ -3,12 +3,23 @@
 
 from __future__ import annotations
 
+from typing import get_args
+
+import msgspec
 import pytest
 
 from marimo._core import backend as be, protocol
 from marimo._core.host import Host
 from marimo._core.notebook import Notebook
-from marimo._core.stream import Event, Stream, kind_of
+from marimo._core.stream import (
+    CATALOG_KINDS,
+    NOTEBOOK_KINDS,
+    Body,
+    Event,
+    Stream,
+    kind_of,
+    message,
+)
 from tests._core.conftest import ScriptedBackend, names, project
 
 
@@ -85,6 +96,39 @@ def test_readers_cannot_change_other_readers_or_replay() -> None:
     assert reread is not None
     assert isinstance(reread[0].data, protocol.ProjectMessage)
     assert reread[0].data.project == project()
+
+
+@pytest.mark.parametrize("external", [False, True])
+def test_mutable_payloads_are_isolated_from_callers_and_listeners(
+    external: bool,
+) -> None:
+    stream = Stream()
+    payload = protocol.Custom(type="example", data={"values": [1]})
+    delivered: list[Event] = []
+
+    def mutate(event: Event) -> None:
+        assert isinstance(event.data, protocol.CustomMessage)
+        event.data.custom.data["values"].append(2)
+
+    stream.subscribe(mutate)
+    stream.subscribe(delivered.append)
+    if external:
+        event = Event(
+            "custom",
+            protocol.CustomMessage(custom=payload, time=msgspec.UNSET),
+        )
+        published = stream.append(event)
+    else:
+        published = stream.publish(payload)
+    payload.data["values"].append(3)
+    assert isinstance(published.data, protocol.CustomMessage)
+    published.data.custom.data["values"].append(4)
+    replay = stream.since(0)
+    assert replay is not None
+    assert [event.data.custom.data for event in [*delivered, *replay]] == [
+        {"values": [1]},
+        {"values": [1]},
+    ]
 
 
 def test_deferred_events_join_history_before_delivery() -> None:
@@ -183,3 +227,44 @@ def test_custom_events_are_on_the_notebook_stream_only(
     replayed = host._stream.since(cursor)
     assert replayed is not None
     assert names(replayed) == ["custom"]
+
+
+def test_every_body_has_a_kind_a_stream_and_a_message() -> None:
+    kinds = {body_type.__name__.lower() for body_type in get_args(Body)}
+    assert kinds == CATALOG_KINDS | NOTEBOOK_KINDS
+    assert CATALOG_KINDS - NOTEBOOK_KINDS == {"host", "project"}
+    for body_type in get_args(Body):
+        kind = body_type.__name__.lower()
+        wrapper = type(message(_blank(body_type)))
+        assert wrapper.__name__ == f"{body_type.__name__}Message"
+        assert kind in {
+            field.name for field in msgspec.structs.fields(wrapper)
+        }
+        assert kind_of(_blank(body_type)) == kind
+
+
+def _blank(body_type: type[msgspec.Struct]) -> msgspec.Struct:
+    """Build a body with placeholder values, enough to wrap it."""
+    values = {}
+    for field in msgspec.structs.fields(body_type):
+        if field.required:
+            values[field.name] = _placeholder(field.type)
+    return body_type(**values)
+
+
+def _placeholder(annotation: object) -> object:
+    origin = getattr(annotation, "__origin__", None)
+    args = getattr(annotation, "__args__", ())
+    if origin is not None and args:
+        return _placeholder(args[0])
+    if annotation is str:
+        return "x"
+    if annotation is int:
+        return 0
+    if annotation is bool:
+        return False
+    if annotation is float:
+        return 0.0
+    if isinstance(annotation, type) and issubclass(annotation, msgspec.Struct):
+        return _blank(annotation)
+    return None
