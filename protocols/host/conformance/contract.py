@@ -27,6 +27,7 @@ KINDS = (
     "project",
     "notebook",
     "document",
+    "analysis",
     "cell",
     "runtime",
     "attachment",
@@ -203,7 +204,7 @@ def document_state(
     assert document is not None, "snapshot has no document"
     assert sorted(document["order"]) == sorted(cells)
     for cell in cells.values():
-        assert cell["notebook_id"] == document["id"]
+        assert cell["notebook_id"] == document["notebook_id"]
         assert cell["code_hash"] == etag(cell["code"])
         config = cell["config"]
         parts = [cell["code_hash"], cell["name"]]
@@ -212,7 +213,11 @@ def document_state(
             for key in ("column", "disabled", "hide_code", "expand_output")
         )
         assert cell["etag"] == etag("\n".join(parts))
-    assert document["order_etag"] == etag("\n".join(document["order"]))
+    assert document["order_etag"] == etag(
+        json.dumps(
+            document["order"], separators=(",", ":"), ensure_ascii=False
+        )
+    )
     canonical = json.dumps(
         document["app_config"],
         sort_keys=True,

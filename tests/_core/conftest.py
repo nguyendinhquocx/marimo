@@ -3,13 +3,17 @@
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
 from marimo._core import backend as be, protocol
+from marimo._core.document import Document, DocumentSnapshot, code_hash
+from marimo._core.executions import CellExecution, Executions
 from marimo._core.host import Host
 from marimo._core.notebook import Notebook
 from marimo._core.run_log import RetentionPolicy
-from marimo._core.stream import Event
+from marimo._core.stream import Event, Sink
 
 OPERATIONS = ["notebook.create", "runtime.start", "runtime.run"]
 
@@ -34,6 +38,37 @@ class ScriptedBackend:
 
     def forget(self, run_id: str) -> None:
         self.calls.append(("forget", run_id))
+
+
+class ScriptedAnalyzer:
+    """Expose snapshots and let tests complete analysis explicitly."""
+
+    def __init__(self) -> None:
+        self.requests: list[DocumentSnapshot] = []
+        self.pending: asyncio.Queue[
+            tuple[
+                DocumentSnapshot,
+                asyncio.Future[dict[protocol.CellId, protocol.CellAnalysis]],
+            ]
+        ] = asyncio.Queue()
+
+    async def analyze(
+        self, snapshot: DocumentSnapshot
+    ) -> dict[protocol.CellId, protocol.CellAnalysis]:
+        result: asyncio.Future[
+            dict[protocol.CellId, protocol.CellAnalysis]
+        ] = asyncio.get_running_loop().create_future()
+        self.requests.append(snapshot)
+        self.pending.put_nowait((snapshot, result))
+        return await result
+
+    async def next_request(
+        self,
+    ) -> tuple[
+        DocumentSnapshot,
+        asyncio.Future[dict[protocol.CellId, protocol.CellAnalysis]],
+    ]:
+        return await asyncio.wait_for(self.pending.get(), timeout=5)
 
 
 def runtime_id_of(notebook: Notebook) -> protocol.RuntimeId:
@@ -66,6 +101,40 @@ def record(
     )
 
 
+def make_notebook(
+    record: protocol.Notebook,
+    sink: Sink,
+    backend: ScriptedBackend | None = None,
+    *,
+    document: Document | None = None,
+    analyzer: ScriptedAnalyzer | None = None,
+) -> Notebook:
+    return Notebook(
+        document or Document(record.id, [], {}),
+        Executions(),
+        backend or ScriptedBackend(),
+        sink,
+        analyzer=analyzer,
+    )
+
+
+async def add_notebook(
+    host: Host,
+    record: protocol.Notebook,
+    backend: ScriptedBackend,
+    *,
+    document: Document | None = None,
+    analyzer: ScriptedAnalyzer | None = None,
+) -> Notebook:
+    host.add_notebook(
+        record,
+        lambda current, sink: make_notebook(
+            current, sink, backend, document=document, analyzer=analyzer
+        ),
+    )
+    return await host.notebook(record.id)
+
+
 @pytest.fixture
 def host() -> Host:
     return Host(operations=OPERATIONS)
@@ -77,9 +146,9 @@ def backend() -> ScriptedBackend:
 
 
 @pytest.fixture
-def notebook(host: Host, backend: ScriptedBackend) -> Notebook:
+async def notebook(host: Host, backend: ScriptedBackend) -> Notebook:
     host.update_project(project())
-    return host.add_notebook(record(), backend)
+    return await add_notebook(host, record(), backend)
 
 
 @pytest.fixture
@@ -105,7 +174,7 @@ class Clock:
         return self.now
 
 
-def host_at(clock: Clock, history: int = 1000) -> tuple[Host, Notebook]:
+async def host_at(clock: Clock, history: int = 1000) -> tuple[Host, Notebook]:
     host = Host(
         operations=[],
         history=history,
@@ -113,7 +182,7 @@ def host_at(clock: Clock, history: int = 1000) -> tuple[Host, Notebook]:
         retention=RetentionPolicy(ephemeral_seconds=10),
     )
     host.update_project(project())
-    notebook = host.add_notebook(record(), ScriptedBackend())
+    notebook = await add_notebook(host, record(), ScriptedBackend())
     notebook.adopt(lambda _: None)
     notebook.observe(be.Running(runtime_id_of(notebook)))
     return host, notebook
@@ -161,3 +230,38 @@ def fold(events: list[Event], initial: dict | None = None) -> dict:
                 body = getattr(event.data, event.kind)
                 state[event.kind, body.id] = body
     return state
+
+
+def retained_execution(
+    cell_id: str | None = "c1", run_id: str | None = None
+) -> CellExecution:
+    """A completed execution with one console item, as a store retains it."""
+    execution_id = protocol.ExecutionId("restored")
+    return CellExecution(
+        protocol.Execution(
+            id=execution_id,
+            run_id=None if run_id is None else protocol.RunId(run_id),
+            runtime_id=None,
+            caused_by=None,
+            cell_id=None if cell_id is None else protocol.CellId(cell_id),
+            code="42" if cell_id is None else None,
+            code_hash=code_hash("42"),
+            bindings=(),
+            status="completed",
+            outcome=protocol.ValueOutcome(
+                protocol.DisplayData(mimetype="text/plain", data="42")
+            ),
+            stale=False if cell_id is not None else None,
+            started_at=None,
+            completed_at=None,
+        ),
+        (
+            protocol.Console(
+                execution_id,
+                protocol.ItemId("restored-output"),
+                "stdout",
+                0,
+                "hello",
+            ),
+        ),
+    )

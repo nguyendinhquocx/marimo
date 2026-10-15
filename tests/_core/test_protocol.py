@@ -20,6 +20,7 @@ FIXTURES = (
 MODELS = {
     "record.json": protocol.HostRecord,
     "cell.json": protocol.Cell,
+    "analysis.json": protocol.Analysis,
     "diagnostic.json": protocol.Error,
     "edit.json": protocol.EditRequest,
     "edit-conflict-request.json": protocol.EditRequest,
@@ -49,6 +50,10 @@ def stream_events(path: Path) -> list[dict[str, str]]:
             events.append(fields)
     assert events, f"{path.name}: no events"
     return events
+
+
+def identity(body: dict[str, Any]) -> str:
+    return body.get("id") or body["notebook_id"]
 
 
 def messages(name: str, kind: str) -> list[dict[str, Any]]:
@@ -99,7 +104,7 @@ def assert_content_hashes(value: Any) -> None:
             assert value["etag"] == content_hash("\n".join(parts))
         if "order_etag" in value:
             assert value["order_etag"] == content_hash(
-                "\n".join(value["order"])
+                canonical_json(value["order"])
             )
             assert value["app_config_etag"] == content_hash(
                 canonical_json(value["app_config"])
@@ -241,7 +246,7 @@ def test_catalog_capabilities_and_runtime_stop() -> None:
                 assert obj["project_id"] in state["project"]
             if kind in {"runtime", "attachment"}:
                 assert obj["notebook_id"] in state["notebook"]
-            state.setdefault(kind, {})[obj["id"]] = obj
+            state.setdefault(kind, {})[identity(obj)] = obj
         assert not state.get("runtime")
         assert set(state["attachment"]) == {"a1", "a2"}
         catalogs.append(
@@ -274,7 +279,7 @@ def test_notebook_snapshot_matches_live_history() -> None:
         kind = event["event"]
         message = json.loads(event["data"])
         message.pop("time")
-        state[(kind, message[kind]["id"])] = message
+        state[(kind, identity(message[kind]))] = message
     seen_cells = set()
     for event in notebook[:ready]:
         kind = event["event"]
@@ -283,7 +288,7 @@ def test_notebook_snapshot_matches_live_history() -> None:
             seen_cells.add(message["cell"]["id"])
         elif kind == "document":
             assert set(message["document"]["order"]) == seen_cells
-        key = (kind, message[kind]["id"])
+        key = (kind, identity(message[kind]))
         if key in state:
             assert state.pop(key) == message
     assert not state

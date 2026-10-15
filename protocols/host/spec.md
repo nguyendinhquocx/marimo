@@ -38,8 +38,8 @@ earlier results stale. The notebook presents these relationships alongside its
 document and results, allowing clients to follow how changes affect the
 computation.
 
-A **runtime** is the kernel that evaluates cells according to the document's
-dependencies and execution policy. A host can attach a runtime to produce new
+A **runtime** is the kernel that evaluates cells according to their dependencies
+and its execution configuration. A host can attach a runtime to produce new
 results or serve the document and retained results from storage.
 
 Hosts advertise their capabilities as a set of operations, which clients use to
@@ -76,13 +76,14 @@ across renames and moves.
 ### Documents and cells
 
 The **document** is the notebook's editable source, organized into **cells**.
-Each cell holds code and the information used to present and execute it. Cells
-also MAY carry static analysis so clients can understand their role in the
+Each cell holds code and the information used to present and execute it. A host
+MAY also publish an **analysis** of the document: each cell's definitions,
+references, and problems, so clients can understand a cell's role in the
 computation and identify problems before execution.
 
 Because cells share a dependency graph, editing one can affect the analysis of
-others. Hosts MUST publish those changes together with the edit, giving clients
-a consistent view of the document.
+others. An analysis therefore covers the whole document and names the revision
+it describes. Hosts publish it after that revision of the document.
 
 ### Runtimes and attachments
 
@@ -262,10 +263,10 @@ formatting, MUST reach clients through the document stream as well.
 ### Execution
 
 Clients can request document cells or submit scratch code. Cells execute under
-the notebook's reactive policy, which determines how dependent cells are
-scheduled. Scratch code runs against a copy of the runtime namespace outside
-the document's dependency graph. A client can ask the host to verify that a
-cell's code still matches what it read before executing it.
+the runtime's execution configuration, which determines how dependent cells
+are scheduled. Scratch code runs against a copy of the runtime namespace
+outside the document's dependency graph. A client can ask the host to verify
+that a cell's code still matches what it read before executing it.
 
 An accepted execution request starts a run whose progress and results arrive on
 the notebook stream for all attached clients. Clients that need to observe the

@@ -219,7 +219,8 @@ paths:
         that orders them, in the opening phase and after every change, so
         a client never holds a document whose `order` names a cell it has
         not received. The effects of one change to the document arrive
-        together, with no other event between them.
+        together, with no other event between them. The analysis, when
+        the host has one, follows the document it describes.
       parameters:
         - $ref: '#/components/parameters/NotebookId'
         - $ref: '#/components/parameters/Types'
@@ -237,7 +238,7 @@ paths:
                 description: |
                   One event. `data` holds JSON, and the event name says
                   which shape: a NotebookMessage, DocumentMessage,
-                  CellMessage, RuntimeMessage, AttachmentMessage,
+                  AnalysisMessage, CellMessage, RuntimeMessage, AttachmentMessage,
                   RunMessage, ExecutionMessage, ConsoleMessage, or
                   DisplayMessage for an event named
                   after that kind; a CustomMessage for `custom`; a RemovedMessage
@@ -292,7 +293,9 @@ paths:
         On success the document has changed, and every attachment sees
         the effects on the notebook's stream with this request's key: the
         cells that changed, `cell.removed` for each deleted cell, and then
-        the document, with nothing in between. The response carries the
+        the document, with nothing in between. The analysis of the new
+        revision follows with the same key once the host has it. The
+        response carries the
         new etags, so a client keeps editing without reading again. A
         change that changes nothing keeps its etags and sends no events.
         Whether the result has reached the store shows in the document's
@@ -501,9 +504,9 @@ paths:
       description: |
         Runs `code` in a copy of the notebook runtime's namespace, or runs
         `cells` of the document. Scratch code stays out of the graph and
-        its execution carries the submitted code. Cells run in the graph
-        along with their dependents under the document's policy. Each gets
-        an execution with its `cell_id` and no code. The host assigns a run
+        its execution carries the submitted code. The runtime's execution
+        configuration determines whether dependent cells run too. Each cell
+        gets an execution with its `cell_id` and no code. The host assigns a run
         id independent of the request's `Idempotency-Key` and answers `202`
         with the run `queued` or `running`. The rest arrives on the notebook's
         stream with this request's key: executions as they start, console
@@ -826,10 +829,11 @@ components:
       description: |
         The kinds a stream carries, and the values `types` accepts. The
         catalog stream carries host, project, notebook, runtime, and
-        attachment. A notebook's stream carries notebook, document, cell,
-        runtime, attachment, run, execution, console, display, and custom.
-        Custom events describe occurrences rather than object state.
-      enum: [host, project, notebook, document, cell, runtime, attachment, run, execution, console, display, custom]
+        attachment. A notebook's stream carries notebook, document,
+        analysis, cell, runtime, attachment, run, execution, console,
+        display, and custom. Custom events describe occurrences rather
+        than object state.
+      enum: [host, project, notebook, document, analysis, cell, runtime, attachment, run, execution, console, display, custom]
     Custom:
       type: object
       description: |
@@ -1286,13 +1290,29 @@ components:
     Analysis:
       type: object
       description: |
+        What a document's cells imply, computed together over one
+        revision of the document so that cross-cell errors agree. One
+        per notebook, and removed with it. It follows the document it
+        describes, and `document_etag` says which revision that is.
+      required: [notebook_id, document_etag, cells]
+      properties:
+        notebook_id:
+          $ref: '#/components/schemas/NotebookId'
+          description: The notebook this analysis belongs to.
+        document_etag:
+          $ref: '#/components/schemas/Etag'
+          description: The document revision this analysis describes. Equal to the document's `etag` while the analysis is current.
+        cells:
+          type: object
+          additionalProperties: { $ref: '#/components/schemas/CellAnalysis' }
+          description: Every cell of that revision, by id.
+    CellAnalysis:
+      type: object
+      description: |
         What a cell's text implies: the names it defines and reads, which
         are the edges of the dependency graph, and the errors found in the
         text alone or across the set of cells. A pure function of the
-        code, so two producers compute the same values. Cross-cell errors
-        need the whole set of cells and are reported as soon as the
-        document has them, in the same unit as the change that caused
-        them, without moving the etag of a cell whose code did not change.
+        code, so two producers compute the same values.
       required: [defs, refs, errors]
       properties:
         defs:
@@ -1311,10 +1331,10 @@ components:
       type: object
       description: |
         A unit of code and configuration in the document. A cell event
-        fires when its code, name, config, or analysis changes. Only the
-        first three move its etag. Markdown and SQL cells are code that
-        calls `mo.md` or `mo.sql`; a client chooses the editor to show.
-      required: [id, notebook_id, code, name, config, etag, code_hash, analysis]
+        fires when its code, name, or config changes. Markdown and SQL
+        cells are code that calls `mo.md` or `mo.sql`; a client chooses
+        the editor to show.
+      required: [id, notebook_id, code, name, config, etag, code_hash]
       properties:
         id: { $ref: '#/components/schemas/CellId' }
         notebook_id: { $ref: '#/components/schemas/NotebookId' }
@@ -1331,21 +1351,19 @@ components:
         code_hash:
           $ref: '#/components/schemas/Etag'
           description: Identifies the code alone. Its text is `code`. Unchanged by renaming the cell or editing its config. Compare with an execution's `code_hash` to tell whether a result came from the current code.
-        analysis:
-          oneOf: [{ $ref: '#/components/schemas/Analysis' }, { type: 'null' }]
-          description: Derived from the code by the host. Null when the host has no analyzer.
     Document:
       type: object
       description: |
         The document as a whole, without its cells, which are their own
-        objects: the cell order, the app config, and the policy, which is
-        what the notebook's file holds. One per notebook, identified by
-        the notebook's id, and removed with it. The order and the app
+        objects: the cell order, app config, and host execution policy.
+        The policy is retained for v1 compatibility and comes from the
+        runtime configuration, not the notebook's app config. One per notebook,
+        and removed with it. The order and the app
         config carry their own etags, so an edit to one does not conflict
         with an edit to the other, or with edits to cells.
-      required: [id, order, app_config, policy, etag, saved_etag, order_etag, app_config_etag]
+      required: [notebook_id, order, app_config, policy, etag, saved_etag, order_etag, app_config_etag]
       properties:
-        id:
+        notebook_id:
           $ref: '#/components/schemas/NotebookId'
           description: The notebook this document belongs to.
         order:
@@ -1368,7 +1386,7 @@ components:
           description: Identifies the document as last written to the host's store, computed the same way over that state. Equal to `etag` when every accepted change has been persisted. Null when nothing has been persisted, which is the case for a scratch copy.
         order_etag:
           $ref: '#/components/schemas/Etag'
-          description: Identifies the order alone. Its text is the cell ids in order. Editing a cell does not change it.
+          description: Identifies the order alone. Its text is the cell IDs in order as a JSON array, with no whitespace and strings carrying only the escapes JSON requires. Editing a cell does not change it.
         app_config_etag:
           $ref: '#/components/schemas/Etag'
           description: Identifies the app config alone. Its text is the app config as canonical JSON, with keys sorted by code point, no whitespace, and strings carrying only the escapes JSON requires.
@@ -1468,6 +1486,14 @@ components:
         request_id: *request_id
         time: *time
         document: { $ref: '#/components/schemas/Document' }
+    AnalysisMessage:
+      type: object
+      description: The data of an `analysis` event. The analysis as it now is.
+      required: [analysis]
+      properties:
+        request_id: *request_id
+        time: *time
+        analysis: { $ref: '#/components/schemas/Analysis' }
     CellMessage:
       type: object
       description: The data of a `cell` event. The cell as it now is.
@@ -1775,7 +1801,7 @@ components:
           type: array
           minItems: 1
           items: { $ref: '#/components/schemas/RequestedCell' }
-          description: Cells of the document to run, in no particular order. What depends on them runs too, under the document's policy.
+          description: Cells of the document to run, in no particular order. The runtime's execution configuration determines whether dependent cells run too.
     RequestedCell:
       type: object
       required: [id]
