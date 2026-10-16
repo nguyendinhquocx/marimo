@@ -11,6 +11,7 @@ import msgspec
 from msgspec.structs import replace
 
 from marimo._core import backend as be, protocol
+from marimo._core.document import Changed
 from marimo._core.errors import Conflict, NoRuntime, NotFound
 from marimo._core.executions import Executions, Released, Removed
 from marimo._core.ids import mint
@@ -20,12 +21,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
 
     from marimo._core.analysis import Analyzer
-    from marimo._core.document import (
-        CellSource,
-        Changed,
-        Document,
-        DocumentSnapshot,
-    )
+    from marimo._core.document import CellSource, Document, DocumentSnapshot
     from marimo._core.executions import Change
     from marimo._core.stream import Body, Sink
 
@@ -108,26 +104,55 @@ class Notebook:
         cells: Sequence[CellSource],
         app_config: Mapping[str, object],
         *,
+        saved: bool = False,
         request_id: str | None = None,
     ) -> Changed:
-        """Replace the document and publish its changes."""
+        """Replace the document and publish its changes.
+
+        With `saved`, the new contents are also the persisted revision.
+        """
         self._require_open()
-        changed = self.document.replace(cells, app_config)
+        document = self.document
+        changed = document.replace(cells, app_config)
+        if saved and (published := document.mark_saved()) is not None:
+            changed = Changed(changed.cells, changed.removed, published)
         self._publish_changed(changed, request_id)
-        if changed.document is not None:
-            self._request_analysis(request_id)
         return changed
 
-    def mark_saved(self, *, request_id: str | None = None) -> None:
-        """Mark the current document revision as saved."""
+    def edit(
+        self, changes: Sequence[protocol.Change], *, request_id: str
+    ) -> protocol.EditResponse:
+        """Apply an edit as one unit and publish its effects.
+
+        Raises:
+            EditConflict: If a precondition is stale. Nothing is applied.
+            Invalid: If a change could not apply to any state.
+        """
         self._require_open()
-        document = self.document.mark_saved()
-        if document is not None:
-            self._publish(document, request_id)
+        applied = self.document.apply(changes)
+        self._publish_changed(applied.changed, request_id)
+        return protocol.EditResponse(
+            document=self.document._record, cells=applied.cells
+        )
+
+    def mark_saved(
+        self, etag: protocol.Etag, *, request_id: str | None = None
+    ) -> protocol.Document:
+        """Record `etag` as the persisted revision and return the document.
+
+        The revision may precede the current one, when the document
+        changed while it was being written.
+        """
+        self._require_open()
+        published = self.document.mark_saved(etag)
+        if published is not None:
+            self._publish(published, request_id)
+        return self.document._record
 
     def _publish_changed(
         self, changed: Changed, request_id: str | None
     ) -> None:
+        """Publish a document change, then analyze the new revision."""
         with self.sink.deferred():
             for cell in changed.cells:
                 self._publish(cell, request_id)
@@ -138,6 +163,8 @@ class Notebook:
                 self._remove("cell", cell_id, request_id)
             if changed.document is not None:
                 self._publish(changed.document, request_id)
+        if changed.document is not None:
+            self._request_analysis(request_id)
 
     # ---- analysis ------------------------------------------------------
 

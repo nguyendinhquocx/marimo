@@ -27,28 +27,6 @@ else:
     )
 
 
-class Binding(Struct, frozen=True):
-    name: str
-    preview: (
-        Annotated[
-            str,
-            Meta(
-                description="A short rendering of the value. A host may leave it null."
-            ),
-        ]
-        | None
-    )
-    type: (
-        Annotated[
-            str,
-            Meta(
-                description="The runtime's label for the value's type. A host may leave it null."
-            ),
-        ]
-        | None
-    )
-
-
 class CellConfig(Struct, frozen=True):
     column: (
         Annotated[
@@ -243,7 +221,7 @@ else:
         Annotated[
             str,
             Meta(
-                description="Identifies a console or display item. Unique within the host; sending an item again with the same id replaces it.",
+                description="Identifies a console, display, or variable item. Unique within the host; sending an item again with the same id replaces it.",
                 min_length=1,
             ),
         ],
@@ -287,10 +265,11 @@ ObjectType: TypeAlias = Annotated[
         "execution",
         "console",
         "display",
+        "variable",
         "custom",
     ],
     Meta(
-        description="The kinds a stream carries, and the values `types` accepts. The\ncatalog stream carries host, project, notebook, runtime, and\nattachment. A notebook's stream carries notebook, document,\nanalysis, cell, runtime, attachment, run, execution, console,\ndisplay, and custom. Custom events describe occurrences rather\nthan object state.\n"
+        description="The kinds a stream carries, and the values `types` accepts. The\ncatalog stream carries host, project, notebook, runtime, and\nattachment. A notebook's stream carries notebook, document,\nanalysis, cell, runtime, attachment, run, execution, console,\ndisplay, variable, and custom. Custom events describe occurrences\nrather than object state.\n"
     ),
 ]
 
@@ -439,6 +418,22 @@ class RequestedCell(Struct, frozen=True):
     ) = UNSET
 
 
+class Revision(Struct, frozen=True):
+    execution: Annotated[
+        ExecutionId,
+        Meta(
+            description="The execution whose evaluation produced the value. Usually the variable's `execution_id`, and earlier when the runtime carried the value forward."
+        ),
+    ]
+    update: Annotated[
+        int,
+        Meta(
+            description="How many times the value has been updated since it was produced. Zero at binding.",
+            ge=0,
+        ),
+    ]
+
+
 if TYPE_CHECKING:
     RunId = NewType("RunId", str)
 else:
@@ -514,20 +509,6 @@ class SaveRequest(Struct, frozen=True):
     ) = UNSET
 
 
-class SetAppConfig(
-    Struct, frozen=True, tag_field="kind", tag="set_app_config"
-):
-    app_config: Annotated[
-        dict[str, Any], Meta(description="The new app config, whole.")
-    ]
-    base_etag: Annotated[
-        str,
-        Meta(
-            description="The document's `app_config_etag` as last read, or `*`."
-        ),
-    ]
-
-
 class SetOrder(Struct, frozen=True, tag_field="kind", tag="set_order"):
     base_etag: Annotated[
         str,
@@ -579,6 +560,55 @@ class ValueOutcome(Struct, frozen=True, tag_field="kind", tag="value"):
         ]
         | None
     )
+
+
+class Variable(Struct, frozen=True):
+    execution_id: Annotated[
+        ExecutionId, Meta(description="The execution that bound the name.")
+    ]
+    id: ItemId
+    name: Annotated[str, Meta(description="The name in the namespace.")]
+    preview: (
+        Annotated[
+            str,
+            Meta(
+                description="A short rendering of the value. A host may leave it null."
+            ),
+        ]
+        | None
+    )
+    revision: Revision
+    type: (
+        Annotated[
+            str,
+            Meta(
+                description="The runtime's label for the value's type. A host may leave it null."
+            ),
+        ]
+        | None
+    )
+
+
+class VariableMessage(Struct, frozen=True):
+    variable: Variable
+    request_id: (
+        Annotated[
+            str,
+            Meta(
+                description="The `Idempotency-Key` of the request that caused this event. Omitted when no request did, and on snapshots unless that request's work is still in progress."
+            ),
+        ]
+        | UnsetType
+    ) = UNSET
+    time: (
+        Annotated[
+            datetime,
+            Meta(
+                description="When the host made this change. Present on live and replayed events; omitted on snapshots."
+            ),
+        ]
+        | UnsetType
+    ) = UNSET
 
 
 class Attachment(Struct, frozen=True):
@@ -696,7 +726,7 @@ class CellMessage(Struct, frozen=True):
 
 
 Change: TypeAlias = Annotated[
-    PutCell | DeleteCell | SetOrder | SetAppConfig,
+    PutCell | DeleteCell | SetOrder,
     Meta(description="One change to the document, tagged on `kind`."),
 ]
 
@@ -824,7 +854,7 @@ class Document(Struct, frozen=True):
     app_config: Annotated[
         dict[str, Any],
         Meta(
-            description="Notebook-level settings, the keyword arguments to `marimo.App` such as `width` and `title`."
+            description="Notebook-level settings, the keyword arguments to `marimo.App` such as `width` and `app_title`. Informational for now; no change sets it over this protocol."
         ),
     ]
     app_config_etag: Annotated[
@@ -857,7 +887,7 @@ class Document(Struct, frozen=True):
     policy: Annotated[
         Literal["autorun", "lazy"],
         Meta(
-            description="When dependents of an evaluated cell run. `autorun` runs them on every change; `lazy` marks them stale and runs them when asked. Set by the host."
+            description="When dependents of an evaluated cell run. `autorun` runs them on every change; `lazy` leaves them for a later run. Set by the host."
         ),
     ]
     saved_etag: (
@@ -898,7 +928,7 @@ class EditConflict(Struct, frozen=True):
         Annotated[
             Cell,
             Meta(
-                description="The cell the change named, as it now is. Null when the document does not have it, or when the change named the order or the app config."
+                description="The cell the change named, as it now is. Null when the document does not have it, or when the change named the order."
             ),
         ]
         | None
@@ -1323,12 +1353,6 @@ class CellAnalysis(Struct, frozen=True):
 
 
 class Execution(Struct, frozen=True):
-    bindings: Annotated[
-        tuple[Binding, ...],
-        Meta(
-            description="Names bound in the namespace, with a type and preview, stamped when the execution ends. Empty while running and for scratch code, whose bindings die with the execution."
-        ),
-    ]
     caused_by: (
         Annotated[
             ExecutionId,
@@ -1371,6 +1395,12 @@ class Execution(Struct, frozen=True):
         ]
         | None
     )
+    depends_on: Annotated[
+        dict[str, Revision | None],
+        Meta(
+            description="The variables the execution used, by name, each at the revision the runtime holds its result valid against. Null for a name no retained cell execution had bound. Empty while queued, stamped as the execution ends, and final from then on."
+        ),
+    ]
     id: ExecutionId
     outcome: (
         Annotated[
@@ -1395,15 +1425,6 @@ class Execution(Struct, frozen=True):
             RuntimeId,
             Meta(
                 description="The runtime that produced this execution. Live when it equals the current runtime's id. Null when the producer is unknown."
-            ),
-        ]
-        | None
-    )
-    stale: (
-        Annotated[
-            bool,
-            Meta(
-                description="Whether an input changed since this result was produced. Null for scratch code, which has no inputs in the graph."
             ),
         ]
         | None
