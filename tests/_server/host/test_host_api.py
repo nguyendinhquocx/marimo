@@ -1484,7 +1484,7 @@ async def test_the_notebook_stream_carries_cells_then_the_document(
     assert second["config"]["hide_code"] is True
     assert document["order"] == [first["id"], second["id"]]
     assert document["app_config"] == {"width": "full"}
-    assert document["policy"] == "autorun"
+    assert "policy" not in document
     assert document["saved_etag"] == document["etag"]
     assert all(
         c["notebook_id"] == harness.notebook_id for c in (first, second)
@@ -1749,8 +1749,9 @@ async def test_save_writes_the_file_and_reports_the_saved_revision(
 async def test_edits_during_a_save_remain_unsaved(
     harness: Harness, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    document = (await harness.host.notebook(harness.notebook_id)).document
-    written = document._record.etag
+    notebook = await harness.host.notebook(harness.notebook_id)
+    document = notebook.document
+    written = document.etag
     started = asyncio.Event()
     release = threading.Event()
     loop = asyncio.get_running_loop()

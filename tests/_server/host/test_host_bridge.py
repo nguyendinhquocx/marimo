@@ -9,7 +9,6 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from marimo._config.manager import MarimoConfigManager
 from marimo._core import protocol
 from marimo._core.errors import Conflict, DecisionRequired, EditConflict
 from marimo._core.stream import Event
@@ -29,8 +28,7 @@ if TYPE_CHECKING:
     from pathlib import Path
     from typing import Any
 
-    from marimo._config.manager import UserConfigStore
-    from marimo._core.document import CellSource, Policy
+    from marimo._core.document import DocumentCell
     from marimo._session.consumer import SessionConsumer
 
 
@@ -52,78 +50,6 @@ def _():
     x = 1
     return (x,)
 """
-
-
-@pytest.mark.parametrize(
-    ("server_policy", "script_policy", "expected"),
-    [
-        ("autorun", None, "autorun"),
-        ("lazy", None, "lazy"),
-        ("autorun", "lazy", "lazy"),
-        ("lazy", "autorun", "autorun"),
-    ],
-)
-async def test_initial_policy_inherits_server_config_with_script_overrides(
-    manager: FakeManager,
-    tmp_path: Path,
-    user_config_manager: UserConfigStore,
-    server_policy: Policy,
-    script_policy: Policy | None,
-    expected: Policy,
-) -> None:
-    prepare(manager, tmp_path, "a.py")
-    path = tmp_path / "a.py"
-    header = (
-        "# /// script\n"
-        "# [tool.marimo.runtime]\n"
-        f'# on_cell_change = "{script_policy}"\n'
-        "# ///\n"
-        if script_policy is not None
-        else ""
-    )
-    path.write_text(header + NOTEBOOK)
-    config = MarimoConfigManager(user_config_manager).with_overrides(
-        {"runtime": {"on_cell_change": server_policy}}
-    )
-    bridge = SessionBridge(manager, config)  # type: ignore[arg-type]
-    await bridge.open()
-    record = bridge.index.notebook_for(str(path))
-    assert record is not None
-
-    notebook = await bridge.host.notebook(record.id)
-
-    assert notebook.document._record.policy == expected
-    assert notebook.runtime is None
-    assert manager.starts == []
-    bridge.close()
-
-
-async def test_initial_policy_uses_the_adopted_sessions_effective_config(
-    manager: FakeManager,
-    tmp_path: Path,
-    user_config_manager: UserConfigStore,
-) -> None:
-    prepare(manager, tmp_path, "a.py")
-    path = tmp_path / "a.py"
-    path.write_text(NOTEBOOK)
-    config = MarimoConfigManager(user_config_manager).with_overrides(
-        {"runtime": {"on_cell_change": "autorun"}}
-    )
-    session = FakeSession(str(path))
-    session.config_manager = config.with_overrides(
-        {"runtime": {"on_cell_change": "lazy"}}
-    )
-    manager.sessions["browser"] = session
-    bridge = SessionBridge(manager, config)  # type: ignore[arg-type]
-
-    await bridge.open()
-
-    record = bridge.index.notebook_for(str(path))
-    assert record is not None
-    notebook = await bridge.host.notebook(record.id)
-    assert notebook.document._record.policy == "lazy"
-    assert notebook.runtime is not None
-    bridge.close()
 
 
 async def test_an_adopted_document_is_saved_as_far_as_the_file_goes(
@@ -154,15 +80,16 @@ async def test_an_adopted_document_is_saved_as_far_as_the_file_goes(
     for name in ("saved.py", "edited.py"):
         record = bridge.index.notebook_for(str(tmp_path / name))
         assert record is not None
-        document = (await bridge.host.notebook(record.id)).document
-        assert document is not None
-        documents[name] = document._record
+        notebook = await bridge.host.notebook(record.id)
+        documents[name] = (notebook.saved_etag, notebook.document.etag)
 
     # A session showing the file as it is on disk is saved.
-    assert documents["saved.py"].saved_etag == documents["saved.py"].etag
+    saved, current = documents["saved.py"]
+    assert saved == current
     # One with an edit the file lacks is not, and names the file's revision.
-    assert documents["edited.py"].saved_etag != documents["edited.py"].etag
-    assert documents["edited.py"].saved_etag == documents["saved.py"].etag
+    saved, current = documents["edited.py"]
+    assert saved != current
+    assert saved == documents["saved.py"][1]
     bridge.close()
 
 
@@ -217,7 +144,7 @@ async def test_delete_during_adoption_preserves_the_file_and_session(
 
     async def paused_load(
         file: Path,
-    ) -> tuple[list[CellSource], dict[str, Any]] | None:
+    ) -> tuple[list[DocumentCell], dict[str, Any]] | None:
         started.set()
         await release.wait()
         return await load(file)
@@ -476,8 +403,9 @@ async def test_editor_transactions_reach_the_host_document(
     bridge.host.subscribe(events.append, notebook_id=record.id)
 
     # The document comes from the session, ids included.
-    document = (await bridge.host.notebook(record.id)).document
-    assert document.order == ["Hbol"]
+    notebook = await bridge.host.notebook(record.id)
+    document = notebook.document
+    assert [c.id for c in document] == ["Hbol"]
 
     # A frontend edit reaches the host document, and the app config as
     # the session reports it comes along.
@@ -493,10 +421,10 @@ async def test_editor_transactions_reach_the_host_document(
         NotebookDocumentTransactionNotification(transaction=applied)
     )
 
-    cell = document.cell("Hbol")
+    cell = notebook.document.cell("Hbol")
     assert cell is not None
     assert cell.code == "x = 2"
-    assert document._record.app_config == {"width": "full"}
+    assert notebook.document.app_config == {"width": "full"}
     assert names(events)[-2:] == ["cell", "document"]
     bridge.close()
 
@@ -521,7 +449,8 @@ async def test_host_edits_reach_the_session_as_one_transaction(
     await bridge.open()
     record = bridge.index.notebook_for(str(tmp_path / "a.py"))
     assert record is not None
-    document = (await bridge.host.notebook(record.id)).document
+    notebook = await bridge.host.notebook(record.id)
+    document = notebook.document
     events: list[Event] = []
     bridge.host.subscribe(events.append, notebook_id=record.id)
 
@@ -545,7 +474,7 @@ async def test_host_edits_reach_the_session_as_one_transaction(
     assert notification.transaction.source == "host"
     # The backend saw its own edit come back and mirrored nothing new.
     assert names(events) == ["cell", "document"]
-    assert document._record.etag == response.document.etag
+    assert notebook.document.etag == response.document.etag
     assert "y = x" not in (tmp_path / "a.py").read_text()
     bridge.close()
 
@@ -584,9 +513,8 @@ async def test_edit_response_includes_app_config_mirrored_from_the_session(
             request_id="edit-1",
         )
 
-        current = notebook.document.snapshot().document
-        assert current.app_config == {"width": "full"}
-        assert response.document == current
+        assert response.document.app_config == {"width": "full"}
+        assert response.document.etag == notebook.document.etag
     finally:
         bridge.close()
 
@@ -603,7 +531,8 @@ async def test_a_new_session_replaces_a_read_without_host_edits(
     await bridge.open()
     record = bridge.index.notebook_for(str(path))
     assert record is not None
-    document = (await bridge.host.notebook(record.id)).document
+    notebook = await bridge.host.notebook(record.id)
+    document = notebook.document
     events: list[Event] = []
     bridge.host.subscribe(events.append, notebook_id=record.id)
 
@@ -613,8 +542,8 @@ async def test_a_new_session_replaces_a_read_without_host_edits(
     session.document = AppFileManager(str(path)).app.cell_manager.document
     await manager.event_bus.emit_session_created(session)  # type: ignore[arg-type]
 
-    assert [cell.code for cell in document] == ["x = 2"]
-    assert document._record.saved_etag == document._record.etag
+    assert [cell.code for cell in notebook.document] == ["x = 2"]
+    assert notebook.saved_etag == notebook.document.etag
     assert names(events)[-3:] == ["cell", "document", "runtime"]
     assert session.notifications == []
     bridge.close()
@@ -637,7 +566,8 @@ async def test_a_new_session_adopts_unsaved_host_edits(
     await bridge.open()
     record = bridge.index.notebook_for(str(tmp_path / "a.py"))
     assert record is not None
-    document = (await bridge.host.notebook(record.id)).document
+    notebook = await bridge.host.notebook(record.id)
+    document = notebook.document
     session = FakeSession(str(tmp_path / "a.py"))
     session.document = NotebookDocument(editor_cell(c) for c in document)
     await bridge.edit(
@@ -656,9 +586,9 @@ async def test_a_new_session_adopts_unsaved_host_edits(
     await manager.event_bus.emit_session_created(session)  # type: ignore[arg-type]
 
     assert [(c.id, c.code) for c in session.document.cells] == [
-        (c.id, c.code) for c in document
+        (c.id, c.code) for c in notebook.document
     ]
-    assert document._record.saved_etag != document._record.etag
+    assert notebook.saved_etag != notebook.document.etag
     assert "unsaved" not in (tmp_path / "a.py").read_text()
     bridge.close()
 
@@ -763,7 +693,8 @@ async def test_save_writes_the_cells_and_keeps_the_app_config(
     await bridge.open()
     record = bridge.index.notebook_for(str(path))
     assert record is not None
-    document = (await bridge.host.notebook(record.id)).document
+    notebook = await bridge.host.notebook(record.id)
+    document = notebook.document
     (cell,) = document
     events: list[Event] = []
     bridge.host.subscribe(events.append, notebook_id=record.id)
@@ -808,9 +739,10 @@ async def test_saving_keeps_an_edit_made_while_the_file_is_written(
     await bridge.open()
     record = bridge.index.notebook_for(str(path))
     assert record is not None
-    document = (await bridge.host.notebook(record.id)).document
+    notebook = await bridge.host.notebook(record.id)
+    document = notebook.document
     (cell,) = document
-    written = document._record.etag
+    written = notebook.document.etag
 
     started = asyncio.Event()
     release = threading.Event()
@@ -838,7 +770,7 @@ async def test_saving_keeps_an_edit_made_while_the_file_is_written(
     # The file has the snapshot; the host keeps the edit, unsaved.
     assert saved.document.etag == edited.document.etag
     assert saved.document.saved_etag == written
-    assert document._record.saved_etag != document._record.etag
+    assert notebook.saved_etag != notebook.document.etag
     assert "x = 1" in path.read_text()
     assert "x = 2" not in path.read_text()
     bridge.close()
@@ -860,7 +792,8 @@ async def test_save_with_a_session_writes_through_the_editors_file_manager(
     await bridge.open()
     record = bridge.index.notebook_for(str(path))
     assert record is not None
-    document = (await bridge.host.notebook(record.id)).document
+    notebook = await bridge.host.notebook(record.id)
+    document = notebook.document
     (cell,) = document
     # The editor wrote once, so its manager remembers what is on disk.
     session.app_file_manager.save_from_cells(list(session.document.cells))
@@ -894,7 +827,7 @@ async def test_the_editor_saving_marks_the_host_document_saved(
     manager: FakeManager, tmp_path: Path
 ) -> None:
     from marimo._ast.cell import CellConfig
-    from marimo._core.document import revision
+    from marimo._core.document import Document
     from marimo._messaging.notebook import NotebookCell
     from marimo._server.host.document import from_file_manager
     from marimo._session.notebook import AppFileManager
@@ -907,23 +840,24 @@ async def test_the_editor_saving_marks_the_host_document_saved(
     await bridge.open()
     record = bridge.index.notebook_for(str(path))
     assert record is not None
-    document = (await bridge.host.notebook(record.id)).document
+    notebook = await bridge.host.notebook(record.id)
+    document = notebook.document
     session = FakeSession(str(path))
     session.app_file_manager = AppFileManager(str(path))
     session.document = session.app_file_manager.app.cell_manager.document
     manager.sessions["browser-1"] = session
     await manager.event_bus.emit_session_created(session)  # type: ignore[arg-type]
     (cell,) = session.document.cells
-    before = document._record.etag
+    before = notebook.document.etag
 
     # The editor writes new content the host has not mirrored yet.
     session.app_file_manager.save_from_cells(
         [NotebookCell(CellId_t(cell.id), "x = 2", cell.name, CellConfig())]
     )
 
-    written = revision(*from_file_manager(session.app_file_manager))
-    assert document._record.saved_etag == written
-    assert document._record.etag == before != written
+    written = Document(*from_file_manager(session.app_file_manager)).etag
+    assert notebook.saved_etag == written
+    assert notebook.document.etag == before != written
 
     # Once the session goes away, its writes are no longer the host's,
     # and the file as the editor left it is what the host compares to.
@@ -953,7 +887,7 @@ async def test_save_refuses_to_overwrite_when_the_file_cannot_be_read(
     record = bridge.index.notebook_for(str(path))
     assert record is not None
     notebook = await bridge.host.notebook(record.id)
-    before = notebook.document.snapshot()
+    before = notebook.document
     external = NOTEBOOK.replace("x = 1", "x = 2")
     path.write_text(external)
 
@@ -965,7 +899,7 @@ async def test_save_refuses_to_overwrite_when_the_file_cannot_be_read(
         with pytest.raises(Conflict, match="could not be read"):
             await bridge.save(record.id, if_match=None, request_id="save-1")
         assert path.read_text() == external
-        assert notebook.document.snapshot() == before
+        assert notebook.document == before
     finally:
         bridge.close()
 
@@ -1012,7 +946,8 @@ async def test_reloading_refuses_to_drop_an_edit_made_while_reading(
     await bridge.open()
     record = bridge.index.notebook_for(str(path))
     assert record is not None
-    document = (await bridge.host.notebook(record.id)).document
+    notebook = await bridge.host.notebook(record.id)
+    document = notebook.document
     (cell,) = document
     path.write_text(NOTEBOOK.replace("x = 1", "x = 2"))
 
@@ -1046,5 +981,5 @@ async def test_reloading_refuses_to_drop_an_edit_made_while_reading(
     with pytest.raises(EditConflict) as conflict:
         await asyncio.wait_for(reloading, 5)
     assert conflict.value.document == edited.document
-    assert document.cell(cell.id).code == "x = 3"  # type: ignore[union-attr]
+    assert notebook.document.cell(cell.id).code == "x = 3"  # type: ignore[union-attr]
     bridge.close()
