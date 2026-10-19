@@ -602,6 +602,42 @@ def test_value_with_cell_selection_then_sorting_dict_of_lists() -> None:
     assert type(table.value) is list
 
 
+@pytest.mark.parametrize("descending", [False, True])
+def test_search_sort_mismatched_columns_with_pagination(
+    descending: bool,
+) -> None:
+    data = {"a": [2], "b": [10, 20]}
+    table = ui.table(data)
+    expected = [{"a": 2, "b": 10}, {"a": None, "b": 20}]
+    if descending:
+        expected.reverse()
+
+    for page_number, row in enumerate(expected):
+        response = table._search(
+            SearchTableArgs(
+                sort=[SortArgs(by="b", descending=descending)],
+                page_size=1,
+                page_number=page_number,
+            )
+        )
+        assert response.total_rows == 2
+        assert json.loads(response.data) == [row]
+        assert table._convert_value([str(page_number)]) == {
+            column: [value] for column, value in row.items()
+        }
+
+    assert data == {"a": [2], "b": [10, 20]}
+
+
+def test_select_rows_mismatched_columns() -> None:
+    data = {"a": [2], "b": [10, 20]}
+    table = ui.table(data, selection="multi")
+
+    assert table._convert_value(["0", "1"]) == {"a": [2, None], "b": [10, 20]}
+    assert table._convert_value(["1"]) == {"a": [None], "b": [20]}
+    assert data == {"a": [2], "b": [10, 20]}
+
+
 def test_search_sort_nonexistent_columns() -> None:
     data = ["banana", "apple", "cherry", "date", "elderberry"]
     table = ui.table(data)

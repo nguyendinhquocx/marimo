@@ -367,6 +367,17 @@ class Range(Struct, frozen=True):
     start: Position
 
 
+class ReadyEvent(Struct, frozen=True, tag_field="event", tag="ready"):
+    data: Annotated[dict[str, Any], Meta(max_length=0)]
+    id: Annotated[
+        str,
+        Meta(
+            description="The resume cursor. Omitted on snapshot and reset events.",
+            min_length=1,
+        ),
+    ]
+
+
 class Related(Struct, frozen=True):
     cell_id: CellId
     message: Annotated[
@@ -418,6 +429,20 @@ class RequestedCell(Struct, frozen=True):
     ) = UNSET
 
 
+class ResetEvent(Struct, frozen=True, tag_field="event", tag="reset"):
+    data: Annotated[dict[str, Any], Meta(max_length=0)]
+    id: (
+        Annotated[
+            str,
+            Meta(
+                description="The resume cursor. Omitted on snapshot and reset events.",
+                min_length=1,
+            ),
+        ]
+        | UnsetType
+    ) = UNSET
+
+
 class Revision(Struct, frozen=True):
     execution: Annotated[
         ExecutionId,
@@ -457,6 +482,22 @@ RunOutcome: TypeAlias = Annotated[
 ]
 
 
+class RunRemovedEvent(
+    Struct, frozen=True, tag_field="event", tag="run.removed"
+):
+    data: RemovedMessage
+    id: (
+        Annotated[
+            str,
+            Meta(
+                description="The resume cursor. Omitted on snapshot and reset events.",
+                min_length=1,
+            ),
+        ]
+        | UnsetType
+    ) = UNSET
+
+
 class RunRequest(Struct, frozen=True):
     cells: (
         Annotated[
@@ -487,6 +528,22 @@ else:
             ),
         ],
     )
+
+
+class RuntimeRemovedEvent(
+    Struct, frozen=True, tag_field="event", tag="runtime.removed"
+):
+    data: RemovedMessage
+    id: (
+        Annotated[
+            str,
+            Meta(
+                description="The resume cursor. Omitted on snapshot and reset events.",
+                min_length=1,
+            ),
+        ]
+        | UnsetType
+    ) = UNSET
 
 
 RuntimeStatus: TypeAlias = Annotated[
@@ -611,6 +668,22 @@ class VariableMessage(Struct, frozen=True):
     ) = UNSET
 
 
+class VariableRemovedEvent(
+    Struct, frozen=True, tag_field="event", tag="variable.removed"
+):
+    data: RemovedMessage
+    id: (
+        Annotated[
+            str,
+            Meta(
+                description="The resume cursor. Omitted on snapshot and reset events.",
+                min_length=1,
+            ),
+        ]
+        | UnsetType
+    ) = UNSET
+
+
 class Attachment(Struct, frozen=True):
     id: AttachmentId
     kind: Annotated[
@@ -668,6 +741,22 @@ class AttachmentMessage(Struct, frozen=True):
     ) = UNSET
 
 
+class AttachmentRemovedEvent(
+    Struct, frozen=True, tag_field="event", tag="attachment.removed"
+):
+    data: RemovedMessage
+    id: (
+        Annotated[
+            str,
+            Meta(
+                description="The resume cursor. Omitted on snapshot and reset events.",
+                min_length=1,
+            ),
+        ]
+        | UnsetType
+    ) = UNSET
+
+
 class Cell(Struct, frozen=True):
     code: Annotated[
         str,
@@ -696,11 +785,13 @@ class Cell(Struct, frozen=True):
         ),
     ]
     notebook_id: NotebookId
-
-
-class CellEtags(Struct, frozen=True):
-    code_hash: Etag
-    etag: Etag
+    version: Annotated[
+        int,
+        Meta(
+            description="The document version at which the cell was created or last changed.",
+            ge=1,
+        ),
+    ]
 
 
 class CellMessage(Struct, frozen=True):
@@ -723,6 +814,30 @@ class CellMessage(Struct, frozen=True):
         ]
         | UnsetType
     ) = UNSET
+
+
+class CellRemovedEvent(
+    Struct, frozen=True, tag_field="event", tag="cell.removed"
+):
+    data: RemovedMessage
+    id: (
+        Annotated[
+            str,
+            Meta(
+                description="The resume cursor. Omitted on snapshot and reset events.",
+                min_length=1,
+            ),
+        ]
+        | UnsetType
+    ) = UNSET
+
+
+class CellVersion(Struct, frozen=True):
+    code_hash: Etag
+    etag: Etag
+    version: Annotated[
+        int, Meta(description="The cell's version after the edit.", ge=1)
+    ]
 
 
 Change: TypeAlias = Annotated[
@@ -770,6 +885,22 @@ class ConsoleMessage(Struct, frozen=True):
     ) = UNSET
 
 
+class ConsoleRemovedEvent(
+    Struct, frozen=True, tag_field="event", tag="console.removed"
+):
+    data: RemovedMessage
+    id: (
+        Annotated[
+            str,
+            Meta(
+                description="The resume cursor. Omitted on snapshot and reset events.",
+                min_length=1,
+            ),
+        ]
+        | UnsetType
+    ) = UNSET
+
+
 class CreateNotebookRequest(Struct, frozen=True):
     project_id: ProjectId
     name: (
@@ -786,6 +917,20 @@ class CreateNotebookRequest(Struct, frozen=True):
             str,
             Meta(
                 description="Where to put the file, relative to the project root and written the way the host's operating system writes paths."
+            ),
+        ]
+        | UnsetType
+    ) = UNSET
+
+
+class CustomEvent(Struct, frozen=True, tag_field="event", tag="custom"):
+    data: CustomMessage
+    id: (
+        Annotated[
+            str,
+            Meta(
+                description="The resume cursor. Omitted on snapshot and reset events.",
+                min_length=1,
             ),
         ]
         | UnsetType
@@ -850,6 +995,22 @@ class DisplayMessage(Struct, frozen=True):
     ) = UNSET
 
 
+class DisplayRemovedEvent(
+    Struct, frozen=True, tag_field="event", tag="display.removed"
+):
+    data: RemovedMessage
+    id: (
+        Annotated[
+            str,
+            Meta(
+                description="The resume cursor. Omitted on snapshot and reset events.",
+                min_length=1,
+            ),
+        ]
+        | UnsetType
+    ) = UNSET
+
+
 class Document(Struct, frozen=True):
     app_config: Annotated[
         dict[str, Any],
@@ -893,6 +1054,13 @@ class Document(Struct, frozen=True):
         ]
         | None
     )
+    version: Annotated[
+        int,
+        Meta(
+            description="Counts changes to the cells, the order, or the app config. A save does not advance it. Comparable only within one notebook while it is in the catalog.",
+            ge=1,
+        ),
+    ]
 
 
 class DocumentMessage(Struct, frozen=True):
@@ -946,9 +1114,9 @@ class EditRequest(Struct, frozen=True):
 
 class EditResponse(Struct, frozen=True):
     cells: Annotated[
-        dict[str, CellEtags | None],
+        dict[str, CellVersion | None],
         Meta(
-            description="The etags of each cell the request created or changed, by id, and null for each cell it deleted."
+            description="The version of each cell the request created or changed, by id, and null for each cell it deleted."
         ),
     ]
     document: Document
@@ -1011,6 +1179,36 @@ class Error(Struct, frozen=True):
 
 class ErrorOutcome(Struct, frozen=True, tag_field="kind", tag="error"):
     error: Error
+
+
+class ExecutionRemovedEvent(
+    Struct, frozen=True, tag_field="event", tag="execution.removed"
+):
+    data: RemovedMessage
+    id: (
+        Annotated[
+            str,
+            Meta(
+                description="The resume cursor. Omitted on snapshot and reset events.",
+                min_length=1,
+            ),
+        ]
+        | UnsetType
+    ) = UNSET
+
+
+class HostEvent(Struct, frozen=True, tag_field="event", tag="host"):
+    data: HostMessage
+    id: (
+        Annotated[
+            str,
+            Meta(
+                description="The resume cursor. Omitted on snapshot and reset events.",
+                min_length=1,
+            ),
+        ]
+        | UnsetType
+    ) = UNSET
 
 
 class HostRecord(Struct, frozen=True):
@@ -1093,6 +1291,22 @@ class NotebookMessage(Struct, frozen=True):
             datetime,
             Meta(
                 description="When the host made this change. Present on live and replayed events; omitted on snapshots."
+            ),
+        ]
+        | UnsetType
+    ) = UNSET
+
+
+class NotebookRemovedEvent(
+    Struct, frozen=True, tag_field="event", tag="notebook.removed"
+):
+    data: RemovedMessage
+    id: (
+        Annotated[
+            str,
+            Meta(
+                description="The resume cursor. Omitted on snapshot and reset events.",
+                min_length=1,
             ),
         ]
         | UnsetType
@@ -1206,6 +1420,22 @@ class ProjectMessage(Struct, frozen=True):
             datetime,
             Meta(
                 description="When the host made this change. Present on live and replayed events; omitted on snapshots."
+            ),
+        ]
+        | UnsetType
+    ) = UNSET
+
+
+class ProjectRemovedEvent(
+    Struct, frozen=True, tag_field="event", tag="project.removed"
+):
+    data: RemovedMessage
+    id: (
+        Annotated[
+            str,
+            Meta(
+                description="The resume cursor. Omitted on snapshot and reset events.",
+                min_length=1,
             ),
         ]
         | UnsetType
@@ -1330,6 +1560,36 @@ class RuntimeMessage(Struct, frozen=True):
     ) = UNSET
 
 
+class VariableEvent(Struct, frozen=True, tag_field="event", tag="variable"):
+    data: VariableMessage
+    id: (
+        Annotated[
+            str,
+            Meta(
+                description="The resume cursor. Omitted on snapshot and reset events.",
+                min_length=1,
+            ),
+        ]
+        | UnsetType
+    ) = UNSET
+
+
+class AttachmentEvent(
+    Struct, frozen=True, tag_field="event", tag="attachment"
+):
+    data: AttachmentMessage
+    id: (
+        Annotated[
+            str,
+            Meta(
+                description="The resume cursor. Omitted on snapshot and reset events.",
+                min_length=1,
+            ),
+        ]
+        | UnsetType
+    ) = UNSET
+
+
 class CellAnalysis(Struct, frozen=True):
     defs: Annotated[
         tuple[str, ...], Meta(description="Names this cell defines.")
@@ -1344,6 +1604,62 @@ class CellAnalysis(Struct, frozen=True):
         tuple[str, ...],
         Meta(description="Names this cell reads from other cells."),
     ]
+
+
+class CellEvent(Struct, frozen=True, tag_field="event", tag="cell"):
+    data: CellMessage
+    id: (
+        Annotated[
+            str,
+            Meta(
+                description="The resume cursor. Omitted on snapshot and reset events.",
+                min_length=1,
+            ),
+        ]
+        | UnsetType
+    ) = UNSET
+
+
+class ConsoleEvent(Struct, frozen=True, tag_field="event", tag="console"):
+    data: ConsoleMessage
+    id: (
+        Annotated[
+            str,
+            Meta(
+                description="The resume cursor. Omitted on snapshot and reset events.",
+                min_length=1,
+            ),
+        ]
+        | UnsetType
+    ) = UNSET
+
+
+class DisplayEvent(Struct, frozen=True, tag_field="event", tag="display"):
+    data: DisplayMessage
+    id: (
+        Annotated[
+            str,
+            Meta(
+                description="The resume cursor. Omitted on snapshot and reset events.",
+                min_length=1,
+            ),
+        ]
+        | UnsetType
+    ) = UNSET
+
+
+class DocumentEvent(Struct, frozen=True, tag_field="event", tag="document"):
+    data: DocumentMessage
+    id: (
+        Annotated[
+            str,
+            Meta(
+                description="The resume cursor. Omitted on snapshot and reset events.",
+                min_length=1,
+            ),
+        ]
+        | UnsetType
+    ) = UNSET
 
 
 class Execution(Struct, frozen=True):
@@ -1457,6 +1773,62 @@ class ExecutionMessage(Struct, frozen=True):
     ) = UNSET
 
 
+class NotebookEvent(Struct, frozen=True, tag_field="event", tag="notebook"):
+    data: NotebookMessage
+    id: (
+        Annotated[
+            str,
+            Meta(
+                description="The resume cursor. Omitted on snapshot and reset events.",
+                min_length=1,
+            ),
+        ]
+        | UnsetType
+    ) = UNSET
+
+
+class ProjectEvent(Struct, frozen=True, tag_field="event", tag="project"):
+    data: ProjectMessage
+    id: (
+        Annotated[
+            str,
+            Meta(
+                description="The resume cursor. Omitted on snapshot and reset events.",
+                min_length=1,
+            ),
+        ]
+        | UnsetType
+    ) = UNSET
+
+
+class RunEvent(Struct, frozen=True, tag_field="event", tag="run"):
+    data: RunMessage
+    id: (
+        Annotated[
+            str,
+            Meta(
+                description="The resume cursor. Omitted on snapshot and reset events.",
+                min_length=1,
+            ),
+        ]
+        | UnsetType
+    ) = UNSET
+
+
+class RuntimeEvent(Struct, frozen=True, tag_field="event", tag="runtime"):
+    data: RuntimeMessage
+    id: (
+        Annotated[
+            str,
+            Meta(
+                description="The resume cursor. Omitted on snapshot and reset events.",
+                min_length=1,
+            ),
+        ]
+        | UnsetType
+    ) = UNSET
+
+
 class Analysis(Struct, frozen=True):
     cells: Annotated[
         dict[str, CellAnalysis],
@@ -1493,3 +1865,64 @@ class AnalysisMessage(Struct, frozen=True):
         ]
         | UnsetType
     ) = UNSET
+
+
+class ExecutionEvent(Struct, frozen=True, tag_field="event", tag="execution"):
+    data: ExecutionMessage
+    id: (
+        Annotated[
+            str,
+            Meta(
+                description="The resume cursor. Omitted on snapshot and reset events.",
+                min_length=1,
+            ),
+        ]
+        | UnsetType
+    ) = UNSET
+
+
+class AnalysisEvent(Struct, frozen=True, tag_field="event", tag="analysis"):
+    data: AnalysisMessage
+    id: (
+        Annotated[
+            str,
+            Meta(
+                description="The resume cursor. Omitted on snapshot and reset events.",
+                min_length=1,
+            ),
+        ]
+        | UnsetType
+    ) = UNSET
+
+
+Event: TypeAlias = Annotated[
+    HostEvent
+    | ProjectEvent
+    | NotebookEvent
+    | DocumentEvent
+    | AnalysisEvent
+    | CellEvent
+    | RuntimeEvent
+    | AttachmentEvent
+    | RunEvent
+    | ExecutionEvent
+    | ConsoleEvent
+    | DisplayEvent
+    | VariableEvent
+    | CustomEvent
+    | ProjectRemovedEvent
+    | NotebookRemovedEvent
+    | CellRemovedEvent
+    | RuntimeRemovedEvent
+    | AttachmentRemovedEvent
+    | RunRemovedEvent
+    | ExecutionRemovedEvent
+    | ConsoleRemovedEvent
+    | DisplayRemovedEvent
+    | VariableRemovedEvent
+    | ResetEvent
+    | ReadyEvent,
+    Meta(
+        description="A record, removal, or control message from a host stream.\nThe data is decoded JSON. Snapshot records and reset events omit\nthe cursor; ready and live events carry it. Unknown event names\nbelong to later versions or host extensions.\n"
+    ),
+]

@@ -16,10 +16,10 @@ from marimo._core.document import Stale
 from marimo._core.errors import Conflict, EditConflict, NoRuntime, NotFound
 from marimo._core.executions import Executions, Released, Removed
 from marimo._core.ids import mint
-from marimo._core.stream import Event, Kind, kind_of, message, utcnow
+from marimo._core.stream import RoutedEvent, snapshot_event, utcnow
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Mapping, Sequence
+    from collections.abc import Callable, Iterator, Mapping, Sequence
 
     from marimo._core.analysis import Analyzer
     from marimo._core.document import (
@@ -28,7 +28,8 @@ if TYPE_CHECKING:
         DocumentCell,
     )
     from marimo._core.executions import Change
-    from marimo._core.stream import Body, Sink
+    from marimo._core.protocol_events import Body, RemovableBody, SnapshotBody
+    from marimo._core.stream import Sink
 
 
 LOGGER = logging.getLogger(__name__)
@@ -62,6 +63,11 @@ class Notebook:
         self._id = notebook_id
         self._document = document
         self._saved_etag = saved_etag
+        # Versions order the records clients read. The document's advances
+        # with each change to its content; a cell's is the document version
+        # at which it was created or last changed.
+        self._version = 1
+        self._cell_versions = {cell.id: 1 for cell in document}
         # The document record as last published, so a change that leaves
         # it the same publishes nothing.
         self._published: protocol.Document | None = self._document_record
@@ -128,6 +134,7 @@ class Notebook:
             saved_etag=self._saved_etag,
             order_etag=document.order_etag,
             app_config_etag=document.app_config_etag,
+            version=self._version,
         )
 
     @property
@@ -157,25 +164,23 @@ class Notebook:
         """Replace the document and publish its changes.
 
         With `saved`, the new contents are also the persisted revision.
-        The response carries etags for the cells that changed, and
+        The response carries the version of each cell that changed, and
         `None` for each cell that was removed.
         """
         self._require_open()
         self._document, changed = self._document.replace(cells, app_config)
         if saved:
             self._saved_etag = self._document.etag
-        self._publish_changed(changed, request_id)
-        etags: dict[str, protocol.CellEtags | None] = {
-            cell.id: protocol.CellEtags(
-                etag=cell.etag, code_hash=cell.code_hash
+        with self.sink.deferred():
+            self._publish_changed(changed, request_id)
+            versions: dict[str, protocol.CellVersion | None] = {
+                cell.id: self._cell_version(cell) for cell in changed.cells
+            }
+            for cell_id in changed.removed:
+                versions[cell_id] = None
+            return protocol.EditResponse(
+                document=self._document_record, cells=versions
             )
-            for cell in changed.cells
-        }
-        for cell_id in changed.removed:
-            etags[cell_id] = None
-        return protocol.EditResponse(
-            document=self._document_record, cells=etags
-        )
 
     def edit(
         self, changes: Sequence[protocol.Change], *, request_id: str
@@ -202,11 +207,15 @@ class Notebook:
                 document=self._document_record,
             )
         self._document, applied = result
-        self._publish_changed(applied.changed, request_id)
-        return protocol.EditResponse(
-            document=self._document_record,
-            cells=dict(applied.cells.items()),
-        )
+        with self.sink.deferred():
+            self._publish_changed(applied.changed, request_id)
+            return protocol.EditResponse(
+                document=self._document_record,
+                cells={
+                    cell_id: None if cell is None else self._cell_version(cell)
+                    for cell_id, cell in applied.cells.items()
+                },
+            )
 
     def mark_saved(
         self, etag: protocol.Etag, *, request_id: str | None = None
@@ -232,6 +241,14 @@ class Notebook:
             config=cell.config,
             etag=cell.etag,
             code_hash=cell.code_hash,
+            version=self._cell_versions[cell.id],
+        )
+
+    def _cell_version(self, cell: DocumentCell) -> protocol.CellVersion:
+        return protocol.CellVersion(
+            etag=cell.etag,
+            code_hash=cell.code_hash,
+            version=self._cell_versions[cell.id],
         )
 
     def _refresh(self) -> protocol.Document | None:
@@ -246,6 +263,12 @@ class Notebook:
         self, changed: Changed, request_id: str | None
     ) -> None:
         """Publish a document change, then analyze the new revision."""
+        if changed:
+            self._version += 1
+            for cell in changed.cells:
+                self._cell_versions[cell.id] = self._version
+            for cell_id in changed.removed:
+                self._cell_versions.pop(cell_id, None)
         with self.sink.deferred():
             for cell in changed.cells:
                 self._publish(self._cell_record(cell), request_id)
@@ -253,7 +276,7 @@ class Notebook:
                 self._apply(
                     self.executions.remove_cell(protocol.CellId(cell_id))
                 )
-                self._remove("cell", cell_id, request_id)
+                self._remove(protocol.Cell, cell_id, request_id)
             record = self._refresh()
             if record is not None:
                 self._publish(record, request_id)
@@ -399,7 +422,7 @@ class Notebook:
         assert self._runtime is not None
         self._apply(self.executions.interrupt())
         runtime, self._runtime = self._runtime, None
-        self._remove("runtime", runtime.id, self._runtime_request)
+        self._remove(protocol.Runtime, runtime.id, self._runtime_request)
         self._runtime_request = None
 
     # ---- runs ----------------------------------------------------------
@@ -440,6 +463,11 @@ class Notebook:
 
     # ---- attachments ---------------------------------------------------
 
+    @property
+    def attachments(self) -> list[protocol.Attachment]:
+        """Return the current attachments in creation order."""
+        return list(self._attachments.values())
+
     def attach(
         self,
         *,
@@ -470,7 +498,7 @@ class Notebook:
         """Remove an attachment if it exists."""
         attachment = self._attachments.pop(attachment_id, None)
         if attachment is not None:
-            self._remove("attachment", attachment.id, None)
+            self._remove(protocol.Attachment, attachment.id, None)
 
     # ---- backend updates -----------------------------------------------
 
@@ -561,35 +589,31 @@ class Notebook:
 
     # ---- stream --------------------------------------------------------
 
-    def _snapshot(self) -> list[Event]:
-        """Return current state as events in dependency order."""
-        bodies: list[Body] = [
-            *(self._cell_record(cell) for cell in self.document),
-            self._document_record,
-        ]
+    def _records(self) -> Iterator[tuple[SnapshotBody, protocol.RunId | None]]:
+        """Current records in dependency order, borrowed until publication."""
+        for cell in self.document:
+            yield self._cell_record(cell), None
+        yield self._document_record, None
         if self._analysis is not None:
-            bodies.append(self._analysis)
+            yield self._analysis, None
         if self._runtime is not None:
-            bodies.append(self._runtime)
-        bodies.extend(self._attachments.values())
-        events = [
-            Event(kind_of(body), message(body), notebook_id=self.id)
-            for body in bodies
-        ]
-        executions = self.executions
-        for record in executions._records():
-            run_id = executions.run_id_of(record)
-            events.append(
-                Event(
-                    kind_of(record),
-                    message(
-                        record, request_id=executions.snapshot_request(run_id)
-                    ),
-                    notebook_id=self.id,
-                    run_id=run_id,
-                )
+            yield self._runtime, None
+        for attachment in self._attachments.values():
+            yield attachment, None
+        for record in self.executions._records():
+            yield record, self.executions.run_id_of(record)
+
+    def _snapshot(self) -> list[RoutedEvent]:
+        """Return current state as events in dependency order."""
+        return [
+            snapshot_event(
+                record,
+                request_id=self.executions.snapshot_request(run_id),
+                notebook_id=self.id,
+                run_id=run_id,
             )
-        return events
+            for record, run_id in self._records()
+        ]
 
     def _dispose(self, *, request_id: str | None = None) -> None:
         """Close the notebook and remove its state, children first.
@@ -605,7 +629,7 @@ class Notebook:
             self.detach(attachment_id)
         if self._runtime is not None:
             runtime, self._runtime = self._runtime, None
-            self._remove("runtime", runtime.id, request_id)
+            self._remove(protocol.Runtime, runtime.id, request_id)
 
     def _publish(self, body: Body, request_id: str | None) -> None:
         self.sink.publish(
@@ -616,12 +640,12 @@ class Notebook:
 
     def _remove(
         self,
-        kind: Kind,
+        record_type: type[RemovableBody],
         object_id: str,
         request_id: str | None,
     ) -> None:
         self.sink.remove(
-            kind,
+            record_type,
             object_id,
             notebook_id=self.id,
             request_id=request_id,
@@ -640,7 +664,7 @@ class Notebook:
                 request_id = executions.request_id(run_id)
                 if isinstance(change, Removed):
                     self.sink.remove(
-                        change.kind,
+                        change.record_type,
                         change.id,
                         notebook_id=self.id,
                         run_id=run_id,
