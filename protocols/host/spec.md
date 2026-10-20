@@ -83,6 +83,19 @@ the document version at which the cell was created or last changed, so of two
 records of a cell, the higher version is the newer. Versions are comparable
 only within one notebook.
 
+A host MAY withhold a cell's source from a client by publishing `code: null`.
+The field MUST remain present; an empty string means an empty cell. The host
+MUST derive `code_hash` from the actual source even when it withholds that
+source. Withholding source MUST NOT change cell or document etags or versions.
+Clients can therefore compare execution hashes and dependency revisions to
+assess staleness without access to source.
+
+Hosts MUST apply their source visibility policy consistently to snapshots,
+live events, replay, and responses containing cells. `hide_code` is only a
+presentation preference; it does not withhold source. A null `code` field does
+not promise that source cannot be inferred from hashes, outputs, diagnostics,
+or other protocol data.
+
 A host MAY also publish an **analysis** of the document: each cell's
 definitions, references, and problems, so clients can understand a cell's role
 in the computation and identify problems before execution. Because cells share
@@ -247,10 +260,12 @@ each document change as a group without interleaving unrelated events, so
 clients can apply an edit together with its effects on the rest of the
 document.
 
-Each **cursor** marks a position in the stream. After disconnecting, a client
-can reconnect with its last cursor to request the events it missed. If the host
-no longer has those events, it requests a reset. Clients MUST then discard
-their previous view and rebuild it from a fresh snapshot.
+Each **cursor** marks a position in the stream. Clients treat cursors as
+opaque. A client sends back the last cursor it received and does not compare
+or construct cursors. After disconnecting, a client can reconnect with its last
+cursor to request the events it missed. If the host no longer has those events,
+or the cursor predates a loss of host state, it requests a reset. Clients MUST
+then discard their previous view and rebuild it from a fresh snapshot.
 
 Event history can expire while results remain stored. Those results still
 appear in a fresh snapshot, even when their original events are unavailable.
@@ -292,6 +307,11 @@ transient state. For example, a notebook can permit execution while its runtime
 is stopped. A client uses the notebook's current state to determine what
 preparation is needed before calling an operation.
 
+Source visibility and editing permission are independent. A client MAY display
+available source without `notebook.edit`. An editor for existing source needs
+both a non-null `code` and permission to edit. Withholding source does not
+remove the notebook's execution records, outputs, or runtime state.
+
 ### Requests and decisions
 
 Requests can produce changes after their HTTP response has arrived. The host
@@ -315,13 +335,19 @@ Edits describe a group of changes to the document. Hosts MUST apply each group
 atomically and reject the whole group if its preconditions are stale. Clients
 can inspect the conflicting state and decide how to revise their edit.
 
+`put_cell` replaces the whole cell and MUST include string-valued source in
+`CellInput.code`. A client MUST NOT round-trip a withheld `code: null` as an
+edit or substitute an empty string for it. Other changes, such as reordering
+or deleting cells, do not require source but still require editing permission.
+
 Preconditions use **etags**, identifiers derived from content. They let clients
 edit different parts of a document independently while detecting competing
 changes to the same part. For example, two clients can update different cells,
 but an edit based on an older version of the same cell produces a conflict.
-An accepted edit answers with the document and the version of each cell it
-touched. The client already has the content it sent, and the versions let it
-recognize the edit when its events arrive on the stream.
+An accepted edit answers with the version of each cell it touched and the
+document at the edit's revision or a later one. The client already has the
+content it sent, and the versions let it recognize the edit when its events
+arrive on the stream.
 
 Accepting an edit and saving it are separate actions. The host reports whether
 the current document has reached storage, whether it saves automatically or

@@ -124,9 +124,12 @@ def start_forwarder(
             raise PairError(
                 "The agent message forwarder did not attach within 10 seconds."
             ) from error
-        if line != b"attached\n" or process.poll() is not None:
+        if (
+            line not in (b"attached\n", b"attached\r\n")
+            or process.poll() is not None
+        ):
             raise PairError(
-                "The agent message forwarder could not attach. Check the server, token and MARIMO_ENABLE_HOST=1."
+                "The agent message forwarder could not attach. Check the server and token."
             )
         return record
     except (OSError, psutil.Error, PairError):

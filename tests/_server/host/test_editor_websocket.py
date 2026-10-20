@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 
 import msgspec
 import pytest
+from dirty_equals import IsStr
 from starlette.websockets import WebSocketDisconnect
 
 from marimo._messaging.cell_output import CellChannel, CellOutput
@@ -122,6 +123,49 @@ def test_editor_starts_and_runs_through_the_host_socket(
         assert sum("host socket" in str(output) for output in consoles) == 1
 
 
+def test_editor_receives_native_attachment_snapshots_and_changes(
+    client: TestClient, editor_host: SessionBridge
+) -> None:
+    assert client.portal is not None
+    (notebook_id,) = editor_host.host.notebooks
+    notebook = client.portal.call(editor_host.host.notebook, notebook_id)
+    agent = client.portal.call(
+        lambda: notebook.attach(kind="agent", name="Test Agent")
+    )
+    url = f"{socket_url(editor_host)}&types=attachment"
+    with client.websocket_connect(url) as socket:
+        snapshot = socket_snapshot(socket)
+        assert [event["event"] for event in snapshot] == [
+            "attachment",
+            "attachment",
+            "ready",
+        ]
+        assert snapshot[0]["data"]["attachment"] == msgspec.to_builtins(agent)
+        client.portal.call(notebook.detach, agent.id)
+        removed = socket.receive_json()
+        assert removed == {
+            "event": "attachment.removed",
+            "id": IsStr,
+            "data": {"id": agent.id, "time": IsStr},
+        }
+        replacement = client.portal.call(
+            lambda: notebook.attach(kind="agent", name="Replacement")
+        )
+        attached = socket.receive_json()
+        assert attached["event"] == "attachment"
+        assert attached["data"]["attachment"] == msgspec.to_builtins(
+            replacement
+        )
+    client.portal.call(notebook.detach, replacement.id)
+    with client.websocket_connect(url) as socket:
+        snapshot = socket_snapshot(socket)
+        assert [event["event"] for event in snapshot] == [
+            "attachment",
+            "ready",
+        ]
+        assert snapshot[0]["data"]["attachment"]["kind"] == "client"
+
+
 def test_reconnect_keeps_state_and_refresh_replays_it(
     client: TestClient, editor_host: SessionBridge
 ) -> None:
@@ -201,6 +245,7 @@ def test_reconnect_recovers_offline_notifications(
     if replay == "cursor":
         url += f"&cursor={cursor}"
     elif replay == "reset":
+        # A bare integer is a cursor from a host before this one.
         url += "&cursor=999999999"
     with client.websocket_connect(url) as socket:
         opening = socket_snapshot(socket)
@@ -405,14 +450,11 @@ def test_editor_resumes_host_events_without_replaying_private_notifications(
         assert receive_notification(socket, "alert")["title"] == "Reconnected"
 
 
-@pytest.mark.parametrize("cursor", ["bad", "-1", ""])
-def test_invalid_cursor_is_rejected_before_starting_a_session(
-    client: TestClient, editor_host: SessionBridge, cursor: str
+def test_an_empty_cursor_is_rejected_before_starting_a_session(
+    client: TestClient, editor_host: SessionBridge
 ) -> None:
     with pytest.raises(WebSocketDisconnect) as exc:
-        with client.websocket_connect(
-            f"{socket_url(editor_host)}&cursor={cursor}"
-        ):
+        with client.websocket_connect(f"{socket_url(editor_host)}&cursor="):
             pytest.fail("Invalid cursor was accepted")
     assert (exc.value.code, exc.value.reason) == (1008, "Invalid event cursor")
     assert not get_session_manager(client).sessions

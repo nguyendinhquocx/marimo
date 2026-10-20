@@ -28,6 +28,7 @@ from tests._server.host.conftest import FakeManager, FakeSession
 from tests._server.host.drive import (
     AUTHORITY,
     PORT,
+    position,
     socket_snapshot,
     with_client_address,
 )
@@ -149,15 +150,6 @@ def test_snapshot_is_private_and_precedes_updates_during_accept(
                 ) as second:
                     assert socket_snapshot(second)[:-1] == initial
                     live = second.receive_json()
-                    attachment_update = first.receive_json()
-                    assert (
-                        attachment_update["data"]["marimo"]["op"]
-                        == "attachments"
-                    )
-                    assert (
-                        len(attachment_update["data"]["marimo"]["attachments"])
-                        == 2
-                    )
                     assert first.receive_json() == live
                     assert live == {
                         "id": live["id"],
@@ -285,18 +277,15 @@ def test_reconnect_replays_original_events_then_continues_live(
                 url += f"&cursor={cursor}"
             with client.websocket_connect(url, headers=headers) as socket:
                 replay = socket_snapshot(socket)
-                assert replay[0] == missed
-                assert [
-                    event["data"]["marimo"]["op"] for event in replay[1:-1]
-                ] == ["attachments", "attachments"]
-                assert replay[1]["data"]["marimo"]["attachments"] == []
-                assert len(replay[2]["data"]["marimo"]["attachments"]) == 1
+                assert replay[:-1] == [missed]
                 client.portal.call(
                     session.notify, CompletedRunNotification(run_id="live")
                 )
                 live = socket.receive_json()
                 assert live["data"]["marimo"]["run_id"] == "live"
-                assert int(live["id"]) > int(replay[-1]["id"])
+                assert position(bridge.host, live["id"]) > position(
+                    bridge.host, replay[-1]["id"]
+                )
         finally:
             client.portal.call(bridge.close)
 
@@ -326,11 +315,15 @@ def test_expired_cursor_resets_to_current_state(
                 reset = socket_snapshot(socket)
                 assert reset[0] == {"event": "reset", "data": {}}
                 assert reset[1:-1] == initial[:-1]
-                assert int(reset[-1]["id"]) > int(cursor)
+                assert position(bridge.host, reset[-1]["id"]) > position(
+                    bridge.host, cursor
+                )
                 event = client.portal.call(notebook.emit, "test.live", {})
                 live = socket.receive_json()
                 assert live["event"] == "custom"
                 assert live["data"]["custom"] == msgspec.to_builtins(event)
-                assert int(live["id"]) > int(reset[-1]["id"])
+                assert position(bridge.host, live["id"]) > position(
+                    bridge.host, reset[-1]["id"]
+                )
         finally:
             client.portal.call(bridge.close)
