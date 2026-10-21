@@ -3,10 +3,10 @@
 import NodeFs from "node:fs";
 import NodeUrl from "node:url";
 import { describe, expect, expectTypeOf, it } from "vitest";
-import * as Protocol from "../protocol";
+import * as Protocol from "../protocol.ts";
 
 const fixtures = new NodeUrl.URL(
-  "../../../../../protocols/host/fixtures/",
+  "../../../../protocols/host/fixtures/",
   import.meta.url,
 );
 
@@ -77,20 +77,6 @@ describe("host protocol fixtures", () => {
 });
 
 describe("host protocol bindings", () => {
-  it("preserves native marimo payloads without interpreting them", () => {
-    expectTypeOf<Protocol.MarimoEvent["data"]["marimo"]>().toBeUnknown();
-    const input = {
-      event: "marimo",
-      id: "42",
-      data: {
-        marimo: {
-          future_payload: { value: Number.NaN },
-        },
-      },
-    };
-    expect(Protocol.Event.parse(input)).toEqual(input);
-  });
-
   it("accepts additive fields and preserves arbitrary notebook settings", () => {
     const cell = Protocol.Cell.parse(readFixture("cell.json"));
     const input = {

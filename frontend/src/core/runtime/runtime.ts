@@ -3,12 +3,13 @@
 import { Deferred } from "@/utils/Deferred";
 import { Logger } from "@/utils/Logger";
 import { KnownQueryParams } from "../constants";
-import { NOTEBOOK_EVENT_TYPES } from "../host/events";
 import { isIslands } from "../islands/utils";
 import { getSessionId, type SessionId } from "../kernel/session";
 import { isStaticNotebook } from "../static/static-state";
 import { isWasm } from "../wasm/utils";
 import type { RuntimeConfig } from "./types";
+
+const knownQueryParams = new Set(Object.values(KnownQueryParams));
 
 export class RuntimeManager {
   private initialHealthyCheck = new Deferred<void>();
@@ -72,10 +73,7 @@ export class RuntimeManager {
     }
 
     for (const [key, value] of currentParams.entries()) {
-      if (
-        restrictToKnownQueryParams &&
-        !Object.values(KnownQueryParams).includes(key)
-      ) {
+      if (restrictToKnownQueryParams && !knownQueryParams.has(key)) {
         continue;
       }
       baseUrl.searchParams.set(key, value);
@@ -156,17 +154,7 @@ export class RuntimeManager {
    */
   public getWsURL(sessionId: SessionId): URL {
     const searchParams = this.getSessionSearchParams(sessionId);
-    // TODO(MO-8039): Rediscover hosts and resolve notebooks on reconnect.
-    const notebookId = this.config.notebookId;
-    const path = notebookId
-      ? `/api/marimo/v1/notebooks/${encodeURIComponent(notebookId)}/events/ws`
-      : "/ws";
-    const url = this.formatWsURL(path, searchParams);
-    if (notebookId) {
-      // TODO(MO-8034): Separate host options from notebook query params.
-      url.searchParams.set("types", NOTEBOOK_EVENT_TYPES.join(","));
-    }
-    return url;
+    return this.formatWsURL("/ws", searchParams);
   }
 
   /**
@@ -176,8 +164,6 @@ export class RuntimeManager {
    * (see `headers()`) instead of the URL.
    */
   public getSseURL(sessionId: SessionId): URL {
-    // TODO: Migrate editor SSE to the host event stream. Until then, host
-    // state such as attachments is unavailable on this legacy connection.
     const url = this.formatHttpURL({
       path: "/sse",
       searchParams: this.getSessionSearchParams(sessionId),

@@ -25,14 +25,28 @@ if TYPE_CHECKING:
 LOGGER = _loggers.marimo_logger()
 
 
-@contextlib.asynccontextmanager
-async def host(app: Starlette) -> AsyncIterator[None]:
-    """Initialize the host API and discovery record in edit mode."""
+async def ensure_app_host(app: Starlette) -> HostContext:
+    """Initialize a private app host, including for mounts without a lifespan."""
     state = AppStateBase.from_app(app)
-    if state.mode is not SessionMode.EDIT:
-        yield
-        return
+    assert state.mode is SessionMode.RUN
+    if state.host_context is not None:
+        return state.host_context
+    bridge = SessionBridge(state.session_manager, state.config_manager)
+    # App open only subscribes to session events: it does not index files or
+    # await adoption. Concurrent first connections share this context.
+    await bridge.open()
+    context = HostContext(bridge=bridge, token="", port=0)
+    app.state.host_context = context
+    return context
 
+
+async def ensure_host(app: Starlette) -> HostContext:
+    """Return the host used by session brokering and the server lifespan."""
+    state = AppStateBase.from_app(app)
+    if state.mode is SessionMode.RUN:
+        return await ensure_app_host(app)
+    if state.host_context is not None:
+        return state.host_context
     server = state.server.config
     url_host = format_url_host(
         server.host, server.port, route_bind_all_to_loopback=True
@@ -49,9 +63,28 @@ async def host(app: Starlette) -> AsyncIterator[None]:
     )
     await bridge.open()
     token = secrets.token_urlsafe(32)
-    url = host_url(server.host, server.port, state.base_url)
     context = HostContext(bridge=bridge, token=token, port=server.port)
     app.state.host_context = context
+
+    return context
+
+
+@contextlib.asynccontextmanager
+async def host(app: Starlette) -> AsyncIterator[None]:
+    """Serve notebook sessions; publish local discovery only in edit mode."""
+    state = AppStateBase.from_app(app)
+    if state.mode is SessionMode.RUN:
+        context = await ensure_app_host(app)
+        try:
+            yield
+        finally:
+            context.bridge.close()
+            app.state.host_context = None
+        return
+
+    context = await ensure_host(app)
+    server = state.server.config
+    url = host_url(server.host, server.port, state.base_url)
 
     async def maintain() -> None:
         while True:
@@ -63,7 +96,7 @@ async def host(app: Starlette) -> AsyncIterator[None]:
     if url is None:
         LOGGER.warning("No host record: loopback cannot reach %s", server.host)
     else:
-        record = HostRecordFile(url=url, token=token)
+        record = HostRecordFile(url=url, token=context.token)
         try:
             record.write()
         except Exception as e:
@@ -76,5 +109,5 @@ async def host(app: Starlette) -> AsyncIterator[None]:
             await maintenance
         if record is not None:
             record.remove()
-        bridge.close()
+        context.bridge.close()
         app.state.host_context = None

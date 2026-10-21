@@ -36,7 +36,6 @@ vi.mock("@/core/runtime/config", async () => {
 });
 
 import { MockNotebook } from "@/__mocks__/notebook";
-import * as Toast from "@/components/ui/use-toast";
 import { Logger } from "@/utils/Logger";
 import { Deferred } from "@/utils/Deferred";
 import { cellId } from "@/__tests__/branded";
@@ -45,7 +44,7 @@ import { notebookAtom } from "@/core/cells/cells";
 import { AppConfigSchema } from "@/core/config/config-schema";
 import { ConnectionNotice } from "@/components/editor/alerts/connection-notice";
 import { kernelStartupErrorAtom } from "@/core/errors/state";
-import type { RunEvent } from "@/core/host/protocol";
+import type { RunEvent } from "@marimo-team/client/protocol";
 import type { NotificationPayload } from "@/core/kernel/messages";
 import { useRuntimeManager } from "@/core/runtime/config";
 import { initialRunCompletedAtom } from "../../kernel/state";
@@ -235,36 +234,29 @@ describe("useNotebookSession messages", () => {
   }
 
   it.each(["{broken", "null"])(
-    "reports a malformed legacy frame and continues applying notifications: %s",
+    "closes a malformed stream and ignores subsequent notifications: %s",
     (data) => {
-      const toast = vi.spyOn(Toast, "toast");
-      try {
-        receive({ data: { op: "reconnected" } });
-        act(() =>
-          getTransportHandlers().onMessage(
-            new MessageEvent("message", { data }),
-          ),
-        );
-        expect(toast).toHaveBeenCalledExactlyOnceWith({
-          title: "Failed to handle message",
-          description: expect.any(String),
-          variant: "danger",
-        });
-        expect(store.get(connectionAtom)).toEqual({
-          state: ConnectionState.OPEN,
-        });
-        receive({
-          data: {
+      receive({ event: "marimo", data: { marimo: { op: "reconnected" } } });
+      act(() =>
+        getTransportHandlers().onMessage(new MessageEvent("message", { data })),
+      );
+      expect(store.get(connectionAtom)).toEqual({
+        state: ConnectionState.CLOSED,
+        code: "KERNEL_DISCONNECTED",
+        reason: "Failed to decode notebook message",
+      });
+      receive({
+        event: "marimo",
+        data: {
+          marimo: {
             op: "completed-run",
             run_id: "r1",
             outcome: "succeeded",
             error: null,
           },
-        });
-        expect(store.get(initialRunCompletedAtom)).toBe(true);
-      } finally {
-        toast.mockRestore();
-      }
+        },
+      });
+      expect(store.get(initialRunCompletedAtom)).toBe(false);
     },
   );
 

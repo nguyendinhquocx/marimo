@@ -1,8 +1,5 @@
 # Copyright 2026 Marimo. All rights reserved.
-"""Cell definitions, references, and syntax errors for the host protocol.
-
-The kernel reports errors involving multiple cells.
-"""
+"""Cell definitions, references, syntax errors, and graph diagnostics."""
 
 from __future__ import annotations
 
@@ -13,12 +10,18 @@ from typing import TYPE_CHECKING
 from marimo._ast.cell import CellImpl
 from marimo._ast.compiler import compile_cell
 from marimo._core import protocol
+from marimo._lint.validate_graph import (
+    check_for_cycles,
+    check_for_multiple_definitions,
+)
+from marimo._lint.visitors import VariableLineVisitor
 from marimo._runtime.dataflow import DirectedGraph
 from marimo._runtime.dataflow.edges import resolve_cell_references
 from marimo._types.ids import CellId_t
 
 if TYPE_CHECKING:
     from marimo._core.document import Document
+    from marimo._messaging.errors import CycleError
 
 SOURCE = "marimo"
 
@@ -67,6 +70,9 @@ class CellAnalyzer:
                 graph.register_cell(CellId_t(cell.id), cached.result)
         self._cache = cache
 
+        conflicts = check_for_multiple_definitions(graph)
+        cycles = check_for_cycles(graph)
+        order = {cell.id: index for index, cell in enumerate(document)}
         analyses: dict[protocol.CellId, protocol.CellAnalysis] = {}
         for cell in document:
             compiled = cache[cell.id].result
@@ -84,9 +90,103 @@ class CellAnalyzer:
                 analyses[cell.id] = protocol.CellAnalysis(
                     defs=tuple(sorted(compiled.defs)),
                     refs=tuple(sorted(refs)),
-                    errors=(),
+                    errors=tuple(
+                        self._multiple_definitions(
+                            cell.id,
+                            error.name,
+                            sorted(
+                                [
+                                    cell.id,
+                                    *(
+                                        protocol.CellId(cid)
+                                        for cid in error.cells
+                                    ),
+                                ],
+                                key=order.__getitem__,
+                            ),
+                        )
+                        for error in conflicts.get(CellId_t(cell.id), ())
+                    )
+                    + tuple(
+                        _cycle(error)
+                        for error in sorted(
+                            cycles.get(CellId_t(cell.id), ()),
+                            key=lambda error: error.edges_with_vars,
+                        )
+                    ),
                 )
         return analyses
+
+    def _multiple_definitions(
+        self,
+        cell_id: protocol.CellId,
+        name: str,
+        definers: list[protocol.CellId],
+    ) -> protocol.Error:
+        return protocol.Error(
+            kind="multiple-definitions",
+            message=f"Multiple cells define {name}",
+            source=SOURCE,
+            severity="error",
+            range=self._definition(cell_id, name),
+            name=None,
+            traceback=None,
+            related=tuple(
+                protocol.Related(
+                    cell_id=definer,
+                    range=self._definition(definer, name),
+                    message=f"Defines {name}",
+                )
+                for definer in definers
+            ),
+        )
+
+    def _definition(
+        self, cell_id: protocol.CellId, name: str
+    ) -> protocol.Range | None:
+        compiled = self._cache[cell_id].result
+        assert isinstance(compiled, CellImpl)
+        visitor = VariableLineVisitor(name, compiled.code)
+        visitor.visit(compiled.mod)
+        location = visitor.definition_range
+        if location is None:
+            return None
+        line = location.line
+        return protocol.Range(
+            start=protocol.Position(
+                line=line,
+                character=_utf16(compiled.code, line, location.column),
+            ),
+            end=protocol.Position(
+                line=line,
+                character=_utf16(compiled.code, line, location.end_column),
+            ),
+        )
+
+
+def _cycle(error: CycleError) -> protocol.Error:
+    edges = error.edges_with_vars
+    # Preserve dependency order, starting at the same cell for any rotation.
+    start = min(range(len(edges)), key=lambda index: edges[index][2])
+    edges = edges[start:] + edges[:start]
+    return protocol.Error(
+        kind="cycle-dependencies",
+        message=error.describe(),
+        source=SOURCE,
+        severity="error",
+        range=None,
+        name=None,
+        traceback=None,
+        related=tuple(
+            protocol.Related(
+                cell_id=protocol.CellId(child),
+                range=None,
+                message=f"Depends on {parent}"
+                + (f" through {', '.join(names)}" if names else ""),
+            )
+            for parent, names, child in edges
+        ),
+    )
 
 
 def _syntax_error(code: str, e: Exception) -> protocol.Error:

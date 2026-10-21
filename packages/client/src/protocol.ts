@@ -1,6 +1,6 @@
 /* Copyright 2026 Marimo. All rights reserved. */
 // Generated from protocols/host/openapi.yaml. Do not edit.
-// Regenerate with: pnpm --dir frontend codegen
+// Regenerate with: pnpm --dir packages/client codegen
 
 import * as zod from "zod";
 
@@ -1559,24 +1559,6 @@ export const ReadyEvent = zod
 export type ReadyEvent = zod.input<typeof ReadyEvent>;
 export type ReadyEventOutput = zod.output<typeof ReadyEvent>;
 
-export const MarimoNotification = zod.unknown();
-
-export type MarimoNotification = zod.input<typeof MarimoNotification>;
-export type MarimoNotificationOutput = zod.output<typeof MarimoNotification>;
-
-export const MarimoEvent = zod
-  .object({
-    event: zod.enum(["marimo"]),
-    id: zod.string().min(1).optional(),
-    data: zod.object({
-      marimo: MarimoNotification,
-    }),
-  })
-  .describe("A native marimo message carried by a host stream.");
-
-export type MarimoEvent = zod.input<typeof MarimoEvent>;
-export type MarimoEventOutput = zod.output<typeof MarimoEvent>;
-
 export const Event = zod
   .union([
     HostEvent,
@@ -1605,7 +1587,6 @@ export const Event = zod
     VariableRemovedEvent,
     ResetEvent,
     ReadyEvent,
-    MarimoEvent,
   ])
   .describe(
     "A record, removal, or control message from a host stream.\nThe data is decoded JSON. Snapshot records and reset events omit\nthe cursor; ready and live events carry it. Unknown event names\nbelong to later versions or host extensions.\n",
