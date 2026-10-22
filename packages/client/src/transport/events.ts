@@ -1,30 +1,39 @@
 /* Copyright 2026 Marimo. All rights reserved. */
 
 import type * as Protocol from "../protocol.ts";
-import type { Connection } from "../request.ts";
+import type { ClientOptions } from "../request.ts";
 import { type Transport, StreamStopped } from "./frame.ts";
 import { sse } from "./sse.ts";
 import {
   type StreamEvent,
   EventStream,
-  type EventStreamInit,
+  type EventStreamOptions,
   report,
 } from "./stream.ts";
 
-/** Attempts in a row without an event before the stream gives up. */
+/** Failed attempts in a row before the stream gives up. */
 const ATTEMPTS = 10;
 
-/** The delay before reconnecting, which grows with each attempt in a row. */
+/** How long a connection stays open after its first event to count as healthy. */
+const HEALTHY_MS = 5000;
+
+/**
+ * The delay before reconnecting, which grows with each failed attempt in a row.
+ *
+ * Ten attempts wait about 77 seconds in all. Each delay varies by a quarter
+ * either way, so clients that lost the same host do not reconnect in step.
+ */
 function delay(attempt: number): number {
-  return Math.min(1000 * 1.3 ** attempt, 10_000);
+  const backoff = Math.min(1000 * 1.5 ** (attempt - 1), 15_000);
+  return backoff * (0.75 + Math.random() / 2);
 }
 
 /** Whether a stream is receiving events. */
 type Status = "connecting" | "connected" | "closed";
 
 /** How an event stream reaches its host and what it follows. */
-export interface EventsInit<K extends string = Protocol.ObjectTypeOutput>
-  extends Connection, EventStreamInit<K> {
+export interface EventsOptions<K extends string = Protocol.ObjectTypeOutput>
+  extends ClientOptions, EventStreamOptions<K> {
   /** Aborting closes the stream. */
   readonly signal?: AbortSignal;
   /**
@@ -50,12 +59,14 @@ function sleep(ms: number, signal: AbortSignal): Promise<void> {
 /**
  * A host stream, followed across reconnects.
  *
- * Given a URL, it follows the stream there over server-sent events. Given a
- * `Transport`, it follows whatever connection the transport opens.
+ * Given a URL, it follows the stream there with `sse` and sends `types` as a
+ * query parameter. Given a `Transport`, it follows whatever connection the
+ * transport opens.
  *
  * - It starts with a snapshot that ends in `ready`, then delivers changes.
  * - After a dropped connection it resumes from its cursor, backing off between
- *   attempts. It stops after ten attempts in a row without a message.
+ *   attempts. It stops after ten failed attempts in a row. An attempt fails
+ *   unless its connection stayed open for five seconds after its first event.
  * - When it cannot resume, it delivers `reset` and a fresh snapshot follows.
  *   The caller discards what it built on `reset`.
  */
@@ -75,10 +86,11 @@ export class Events<
   readonly #onStatus: ((status: Status) => void) | undefined;
   #settle: { resolve(): void; reject(error: unknown): void } | undefined;
   #release: (() => void) | undefined;
+  readonly #onErrors = new Set<(error: unknown) => void>();
 
   public constructor(
     source: string | URL | Transport,
-    init: EventsInit<K>,
+    init: EventsOptions<K>,
     kinds: readonly string[],
   ) {
     let transport: Transport;
@@ -132,13 +144,36 @@ export class Events<
   }
 
   /**
-   * Call `listener` with each event, in order.
+   * Call `onEvent` with each event, in order, and `onError` if the stream stops.
    *
-   * Returns a function that stops calling it. A listener that throws does not
+   * `onError` receives the error `closed` rejects with. Closing the stream does
+   * not call it, and neither does a stream that stopped before subscribing.
+   * Returns a function that stops calling both. A callback that throws does not
    * interrupt the stream.
    */
-  public subscribe(listener: (event: StreamEvent<K>) => void): () => void {
-    return this.#stream.subscribe(listener);
+  public subscribe(
+    onEvent: (event: StreamEvent<K>) => void,
+    onError?: (error: unknown) => void,
+  ): () => void {
+    let active = true;
+    const unsubscribe = this.#stream.subscribe((event) => {
+      if (active) {
+        onEvent(event);
+      }
+    });
+    const failed = (error: unknown) => {
+      if (active) {
+        onError?.(error);
+      }
+    };
+    if (onError !== undefined && this.#settle !== undefined) {
+      this.#onErrors.add(failed);
+    }
+    return () => {
+      active = false;
+      this.#onErrors.delete(failed);
+      unsubscribe();
+    };
   }
 
   /** Stop following the stream. */
@@ -204,21 +239,27 @@ export class Events<
     const { signal } = this.#controller;
     let attempt = 0;
     while (!signal.aborted) {
+      // Callbacks from an attempt that ended are ignored.
+      let current = true;
+      let healthy = false;
+      let uptime: ReturnType<typeof setTimeout> | undefined;
       try {
         const cursor = this.#stream.resume();
         await transport(
           { cursor, signal },
           {
             open: () => {
-              if (this.#settle !== undefined) {
+              if (current && this.#settle !== undefined) {
                 this.#setStatus("connected");
               }
             },
             message: (message) => {
-              if (this.#settle === undefined) {
+              if (!current || this.#settle === undefined) {
                 return;
               }
-              attempt = 0;
+              uptime ??= setTimeout(() => {
+                healthy = true;
+              }, HEALTHY_MS);
               try {
                 this.#stream.receive(message);
               } catch (error) {
@@ -232,12 +273,17 @@ export class Events<
       } catch (error) {
         this.#finish()?.reject(error);
         return;
+      } finally {
+        current = false;
+        clearTimeout(uptime);
       }
       if (signal.aborted) {
         return;
       }
       this.#setStatus("connecting");
-      attempt += 1;
+      // A host that drops each connection soon after opening it still runs
+      // out of attempts.
+      attempt = healthy ? 1 : attempt + 1;
       if (attempt > ATTEMPTS) {
         this.#finish()?.reject(
           new StreamStopped("The host could not be reached"),
@@ -260,16 +306,34 @@ export class Events<
     }
   }
 
-  /** Close the stream once and return how to settle `closed`. */
+  /**
+   * Close the stream once and return how to settle `closed`.
+   *
+   * Rejecting also calls each subscriber's `onError`.
+   */
   #finish() {
     const settle = this.#settle;
     if (settle === undefined) {
       return undefined;
     }
     this.#settle = undefined;
+    const onErrors = [...this.#onErrors];
+    this.#onErrors.clear();
     this.#release?.();
     this.#controller.abort();
     this.#setStatus("closed");
-    return settle;
+    return {
+      resolve: settle.resolve,
+      reject: (error: unknown) => {
+        settle.reject(error);
+        for (const onError of onErrors) {
+          try {
+            onError(error);
+          } catch (thrown) {
+            report(thrown);
+          }
+        }
+      },
+    };
   }
 }

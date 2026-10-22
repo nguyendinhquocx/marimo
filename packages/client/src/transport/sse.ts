@@ -1,7 +1,7 @@
 /* Copyright 2026 Marimo. All rights reserved. */
 
 import * as Protocol from "../protocol.ts";
-import { type Connection, isType } from "../request.ts";
+import { type ClientOptions, isType } from "../request.ts";
 import { type Frame, type Transport, StreamStopped } from "./frame.ts";
 
 /** Hosts send a comment every fifteen seconds while nothing else happens. */
@@ -9,7 +9,7 @@ const SILENCE_MS = 45_000;
 
 /** Parse server-sent events from decoded text. */
 export class ServerSentEventStream extends TransformStream<string, Frame> {
-  public constructor() {
+  public constructor(parseData: (text: string) => unknown = JSON.parse) {
     let buffer = "";
     let event = "";
     let data: string[] = [];
@@ -19,7 +19,7 @@ export class ServerSentEventStream extends TransformStream<string, Frame> {
         const text = data.join("\n");
         let value: unknown = text;
         try {
-          value = JSON.parse(text);
+          value = parseData(text);
         } catch {
           // Unknown events need not carry JSON.
         }
@@ -74,19 +74,38 @@ export class ServerSentEventStream extends TransformStream<string, Frame> {
 /** Statuses a host answers when it may accept the stream later. */
 const RETRY_STATUSES = new Set([408, 429]);
 
+/** Where a stream is, read again before each connection. */
+export type StreamUrl =
+  | string
+  | URL
+  | (() => string | URL | Promise<string | URL>);
+
+/** How `sse` reaches its host, decodes data, and ends the stream. */
+export interface SseOptions extends ClientOptions {
+  /** Decode each frame's data. Defaults to JSON.parse; on error, keep the text. */
+  readonly parseData?: (text: string) => unknown;
+  /**
+   * Decide whether a frame outside the protocol ends the stream.
+   *
+   * Return an error to stop with it. Return nothing to deliver the frame.
+   */
+  readonly stop?: (frame: Frame) => Error | undefined;
+}
+
 /**
  * Follow a stream over server-sent events, as the protocol defines.
  *
  * The cursor travels in `Last-Event-ID`. A refusal stops the stream with its
  * `Problem`, except for statuses that ask the client to try again. Other
- * failures and 45 seconds of silence are retried.
+ * failures and 45 seconds of silence are retried. A URL given as a function
+ * is read before each connection. It can throw a `StreamStopped` to stop.
  */
-export function sse(url: URL, connection: Connection): Transport {
+export function sse(url: StreamUrl, options: SseOptions = {}): Transport {
   return async ({ cursor, signal }, { open, message }) => {
-    const headers = new Headers(connection.headers);
+    const headers = new Headers();
     headers.set("Accept", "text/event-stream");
-    if (connection.token !== undefined) {
-      headers.set("Authorization", `Bearer ${connection.token}`);
+    if (options.token !== undefined) {
+      headers.set("Authorization", `Bearer ${options.token}`);
     }
     if (cursor !== null) {
       headers.set("Last-Event-ID", cursor);
@@ -95,15 +114,17 @@ export function sse(url: URL, connection: Connection): Transport {
     const abort = () => controller.abort();
     signal.addEventListener("abort", abort, { once: true });
     let silence: ReturnType<typeof setTimeout> | undefined;
+    let stopped: Error | undefined;
     const listen = () => {
       clearTimeout(silence);
       silence = setTimeout(abort, SILENCE_MS);
     };
     try {
-      const fetch = connection.fetch ?? globalThis.fetch;
+      const target = new URL(typeof url === "function" ? await url() : url);
+      const fetch = options.fetch ?? globalThis.fetch;
       // A host that accepts the request but never answers counts as silence.
       listen();
-      const response = await fetch(url, {
+      const response = await fetch(target, {
         headers,
         signal: controller.signal,
       });
@@ -138,7 +159,7 @@ export function sse(url: URL, connection: Connection): Transport {
       const reader = response.body
         .pipeThrough(heard)
         .pipeThrough(new TextDecoderStream())
-        .pipeThrough(new ServerSentEventStream())
+        .pipeThrough(new ServerSentEventStream(options.parseData))
         .getReader();
       controller.signal.addEventListener("abort", () => void reader.cancel(), {
         once: true,
@@ -149,10 +170,14 @@ export function sse(url: URL, connection: Connection): Transport {
         if (done) {
           return;
         }
+        stopped = options.stop?.(value);
+        if (stopped !== undefined) {
+          throw stopped;
+        }
         message(value);
       }
     } catch (error) {
-      if (error instanceof StreamStopped) {
+      if (error instanceof StreamStopped || error === stopped) {
         throw error;
       }
     } finally {
