@@ -112,11 +112,13 @@ jobs:
     timeout-minutes: 25
     strategy:
       matrix:
-        python-version: ["3.11"]
+        python-version: ["3.10"]
         dependencies: ["core", "core,optional"]
         include:
-          - python-version: "3.11"
+          - python-version: "3.10"
             dependencies: "minimal"
+          - python-version: "3.11"
+            dependencies: "core"
           - python-version: "3.12"
             dependencies: "core"
           - python-version: "3.13"
@@ -147,7 +149,7 @@ jobs:
     timeout-minutes: 25
     strategy:
       matrix:
-        python-version: ["3.11"]
+        python-version: ["3.10"]
         dependencies: ["core", "core,optional"]
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -166,7 +168,7 @@ jobs:
     timeout-minutes: 25
     strategy:
       matrix:
-        python-version: ["3.11"]
+        python-version: ["3.10"]
         dependencies: ["core", "core,optional"]
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
