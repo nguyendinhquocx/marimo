@@ -1,5 +1,7 @@
 /* Copyright 2026 Marimo. All rights reserved. */
 
+/** A backend that serves a document snapshot without a host. */
+
 import type * as Protocol from "@marimo-team/client/protocol";
 import type { NotebookBackend } from "./backend";
 
@@ -51,7 +53,7 @@ export function createStaticNotebookBackend(
           message(frame);
         }
       }),
-    client: {
+    notebook: () => ({
       edit: async (_changes, options) => {
         options?.signal?.throwIfAborted();
         return {
@@ -65,6 +67,6 @@ export function createStaticNotebookBackend(
           },
         };
       },
-    },
+    }),
   };
 }

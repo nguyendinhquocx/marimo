@@ -7,22 +7,11 @@ import {
 } from "@marimo-team/client";
 import { createStore } from "jotai/vanilla";
 import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
-import { createNotebookClient } from "../../../host/notebook-client";
-import { fixtureMessages } from "../../../host/__tests__/fixtures";
+import { createNotebookReplica } from "../../../host/replica";
+import { fakeBackend, fixtureMessages } from "../../../host/__tests__/fixtures";
 import { ConnectionState } from "../../../host/connection";
 import { Deferred } from "@/utils/Deferred";
-import {
-  createNotebookTransport,
-  pyodide,
-  sessionSse,
-  websocket,
-} from "../notebook";
-
-const wasm = vi.hoisted(() => ({ enabled: false, consumer: vi.fn() }));
-vi.mock("../../../wasm/utils", () => ({ isWasm: () => wasm.enabled }));
-vi.mock("../../../wasm/bridge", () => ({
-  PyodideBridge: { INSTANCE: { attachMessageConsumer: wasm.consumer } },
-}));
+import { pyodide, sessionSse, websocket } from "../notebook";
 
 const encoder = new TextEncoder();
 
@@ -83,14 +72,14 @@ function network(transportType: "websocket" | "sse", url: StreamUrl) {
   );
   const count = () =>
     transportType === "websocket" ? FakeSocket.opened.length : requests.length;
-  const transport = createNotebookTransport({
-    static: false,
-    transportType,
-    url,
-    headers: () => ({}),
-  });
+  const transport =
+    transportType === "websocket"
+      ? websocket(url)
+      : sessionSse(url, () => ({}));
+  const backend = fakeBackend({ transport });
   let index = 0;
   return {
+    backend,
     transport,
     count,
     opened: async () => {
@@ -126,8 +115,6 @@ function network(transportType: "websocket" | "sse", url: StreamUrl) {
 
 afterEach(() => {
   FakeSocket.opened.length = 0;
-  wasm.enabled = false;
-  wasm.consumer.mockReset();
   vi.unstubAllGlobals();
   vi.useRealTimers();
 });
@@ -309,15 +296,10 @@ describe.each(["websocket", "sse"] as const)(
         const url = vi.fn(() => target);
         const connection = network(transportType, url);
         const store = createStore();
-        const { client, connect } = createNotebookClient(store);
-        const lifetime = new AbortController();
-        onTestFinished(() => lifetime.abort());
-        connect({
-          transport: connection.transport,
-          signal: lifetime.signal,
-          checkHealth: async () => true,
-          onNotification: vi.fn(),
-        });
+        const client = createNotebookReplica(store);
+        onTestFinished(
+          client.connect(connection.backend, { onNotification: vi.fn() }),
+        );
         const first = await connection.opened();
         const snapshot = fixtureMessages("notebook-events.sse");
         snapshot.forEach(first.receive);
@@ -376,15 +358,10 @@ describe.each(["websocket", "sse"] as const)(
       let target = `${base}?session_id=s1&file=a.py&access_token=a`;
       const connection = network(transportType, () => target);
       const store = createStore();
-      const { client, connect } = createNotebookClient(store);
-      const lifetime = new AbortController();
-      onTestFinished(() => lifetime.abort());
-      connect({
-        transport: connection.transport,
-        signal: lifetime.signal,
-        checkHealth: async () => true,
-        onNotification: vi.fn(),
-      });
+      const client = createNotebookReplica(store);
+      onTestFinished(
+        client.connect(connection.backend, { onNotification: vi.fn() }),
+      );
       const first = await connection.opened();
       fixtureMessages("notebook-events.sse").forEach(first.receive);
       await vi.waitFor(() =>
@@ -463,40 +440,6 @@ describe("pyodide", () => {
         },
       ]
     `);
-    events.close();
-  });
-});
-
-describe("createNotebookTransport", () => {
-  const options = {
-    static: false,
-    transportType: "websocket" as const,
-    url: () => "ws://localhost/ws",
-    headers: () => ({}),
-  };
-
-  it.each([
-    ["a static notebook", { ...options, static: true }, "idle"],
-    ["WASM", options, "wasm"],
-    ["SSE", { ...options, transportType: "sse" as const }, "fetch"],
-    ["the default", options, "socket"],
-  ] as const)("follows %s", async (_name, chosen, expected) => {
-    wasm.enabled = expected === "wasm";
-    const fetch = vi.fn(() => new Promise<Response>(() => undefined));
-    vi.stubGlobal("fetch", fetch);
-    vi.stubGlobal("WebSocket", FakeSocket);
-    const events = new NotebookEvents(createNotebookTransport(chosen));
-    await vi.waitFor(() =>
-      expect(
-        {
-          idle:
-            events.status === "connected" && !wasm.consumer.mock.calls.length,
-          wasm: wasm.consumer.mock.calls.length === 1,
-          fetch: fetch.mock.calls.length === 1,
-          socket: FakeSocket.opened.length === 1,
-        }[expected],
-      ).toBe(true),
-    );
     events.close();
   });
 });

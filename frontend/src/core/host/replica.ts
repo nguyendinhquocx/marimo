@@ -1,23 +1,18 @@
 /* Copyright 2026 Marimo. All rights reserved. */
 
+/** What a backend's stream has confirmed about a notebook, kept in atoms. */
+
 import { Logger } from "@/utils/Logger";
 import {
   createNotebookReducer,
   type NotebookEvent,
   NotebookEvents,
-  type NotebookTransport,
-  type Result,
   StreamStopped,
 } from "@marimo-team/client";
-import type {
-  Attachment,
-  Change,
-  EditResponseOutput,
-  NotebookId,
-  NotebookOutput,
-} from "@marimo-team/client/protocol";
+import type { Attachment, NotebookOutput } from "@marimo-team/client/protocol";
 import { type Atom, atom, type createStore } from "jotai/vanilla";
 import { z } from "zod";
+import type { NotebookBackend } from "./backend";
 import {
   ConnectionClosedReason,
   ConnectionState,
@@ -34,9 +29,9 @@ type EditorEvent = NotebookEvent<(typeof TYPES)[number]>;
 /** A native marimo notification, passed through without interpretation. */
 const MarimoMessage = z.object({ marimo: z.unknown() });
 
-/** A connection to a notebook on a marimo host. */
-export interface NotebookClient {
-  /** Client connection status, independent of application session readiness. */
+/** A notebook as its backend's stream reports it, kept current while connected. */
+export interface NotebookReplica {
+  /** Connection status, independent of application session readiness. */
   readonly connectionAtom: Atom<ConnectionStatus>;
   /** Identity and capabilities, available while the stream is connected and ready. */
   readonly notebookAtom: Atom<NotebookOutput | null>;
@@ -48,28 +43,30 @@ export interface NotebookClient {
    * retains the last document. Partial updates are not exposed.
    */
   readonly documentAtom: Atom<Document | null>;
-  /** Apply an edit to the notebook captured by the caller, even across a reset. */
-  edit(
-    notebookId: NotebookId,
-    changes: readonly Change[],
-    options: { readonly idempotencyKey: string; readonly signal: AbortSignal },
-  ): Promise<Result<EditResponseOutput>>;
+  /**
+   * The backend this replica follows, or null while not connected.
+   *
+   * Its commands reach the host that confirmed `documentAtom`. A temporary
+   * disconnection keeps it. Connecting again or disconnecting replaces it.
+   */
+  readonly backendAtom: Atom<NotebookBackend | null>;
   /** Live attachments, empty until the stream is ready or while disconnected. */
   readonly attachmentsAtom: Atom<readonly Attachment[]>;
-  /** Attempt to restore a closed connection after checking host health. */
+  /**
+   * Follow a backend, replacing any current connection.
+   *
+   * The returned function ends this connection and clears the replica.
+   * It does nothing once another connection has replaced this one.
+   */
+  connect(
+    backend: NotebookBackend,
+    options: {
+      /** Handle a native marimo notification. Its payload has not been validated. */
+      onNotification: (notification: unknown) => void;
+    },
+  ): () => void;
+  /** Restore the current connection after its stream closed, if the host is healthy. */
   reconnect(): Promise<void>;
-}
-
-/** The transport and application callbacks needed to follow a notebook. */
-export interface NotebookConnection {
-  /** Opens one connection to the notebook's stream. */
-  transport: NotebookTransport;
-  /** Abort to close the stream and clear the client's state. */
-  signal: AbortSignal;
-  /** Check whether the host is reachable before an explicit reconnect. */
-  checkHealth: () => Promise<boolean>;
-  /** Handle a native marimo notification. Its payload has not been validated. */
-  onNotification: (notification: unknown) => void;
 }
 
 const disconnected = {
@@ -103,14 +100,10 @@ function statusAfter(error: unknown): ConnectionStatus {
   return disconnected;
 }
 
-/**
- * Create a client without opening a connection.
- * The session supplies edits authenticated for the same host as its stream.
- */
-export function createNotebookClient(
+/** Create a replica without connecting it. */
+export function createNotebookReplica(
   store: ReturnType<typeof createStore>,
-  { edit }: { edit?: NotebookClient["edit"] } = {},
-) {
+): NotebookReplica {
   // `useNotebookSession` copies this into the editor's shared `connectionAtom`,
   // which gates features until MO-8051 derives availability separately.
   const connectionAtom = atom<ConnectionStatus>({
@@ -136,48 +129,41 @@ export function createNotebookClient(
       ? get(streamAtom).resources.attachments
       : attachments.initial,
   );
-  let reconnect: (() => Promise<void>) | undefined;
-  const client: NotebookClient = {
-    connectionAtom,
-    notebookAtom,
-    documentAtom,
-    edit: async (notebookId, changes, options) => {
-      options.signal.throwIfAborted();
-      const currentId = store.get(streamAtom).notebookId;
-      if (currentId !== null && currentId !== notebookId) {
-        throw new Error("The notebook changed before the edit was sent");
-      }
-      if (edit === undefined) {
-        return {
-          ok: false,
-          status: 501,
-          problem: {
-            type: "tag:marimo.io,2026:host/unsupported-operation",
-            title: "Document editing is unavailable on this connection",
-            status: 501,
-          },
-        };
-      }
-      return edit(notebookId, changes, options);
-    },
-    attachmentsAtom,
-    reconnect: async () => reconnect?.(),
-  };
+  const backendAtom = atom<NotebookBackend | null>(null);
+  /** The connection this replica follows. Connecting again ends it. */
+  let current: { end(): void; reconnect(): Promise<void> } | undefined;
 
   function setStatus(status: ConnectionStatus) {
     store.set(readyAtom, false);
     store.set(connectionAtom, status);
   }
 
-  function connect({
-    transport,
-    signal,
-    checkHealth,
-    onNotification,
-  }: NotebookConnection) {
-    if (signal.aborted) {
-      return;
-    }
+  /** Drop what the stream reported and show `status`. */
+  function clear(status: ConnectionStatus) {
+    store.set(streamAtom, reducer.initial);
+    setStatus(status);
+  }
+
+  return {
+    connectionAtom,
+    notebookAtom,
+    documentAtom,
+    backendAtom,
+    attachmentsAtom,
+    connect,
+    reconnect: async () => current?.reconnect(),
+  };
+
+  function connect(
+    connected: NotebookBackend,
+    { onNotification }: { onNotification: (notification: unknown) => void },
+  ) {
+    current?.end();
+    const lifetime = new AbortController();
+    const { signal } = lifetime;
+    const checkHealth = connected.checkHealth ?? (async () => true);
+    store.set(backendAtom, connected);
+    const { transport } = connected;
     let events: NotebookEvents<(typeof TYPES)[number]> | undefined;
     let checkingHealth = false;
     // Whether the replica still holds the state the last cursor describes.
@@ -225,8 +211,7 @@ export function createNotebookClient(
       source.close();
       // The cursor can already include an event the replica rejected.
       resumable = false;
-      store.set(streamAtom, reducer.initial);
-      setStatus(malformed);
+      clear(malformed);
     }
 
     function apply(source: NotebookEvents<string>, event: EditorEvent) {
@@ -253,7 +238,7 @@ export function createNotebookClient(
       }
     }
 
-    reconnect = async () => {
+    const reconnect = async () => {
       if (signal.aborted || checkingHealth || events?.status !== "closed") {
         return;
       }
@@ -279,19 +264,23 @@ export function createNotebookClient(
       }
     };
 
-    signal.addEventListener(
-      "abort",
-      () => {
-        reconnect = undefined;
-        store.set(streamAtom, reducer.initial);
-        setStatus({ state: ConnectionState.NOT_STARTED });
+    const connection = {
+      end: () => {
+        if (signal.aborted) {
+          return;
+        }
+        lifetime.abort();
+        if (current === connection) {
+          current = undefined;
+          store.set(backendAtom, null);
+        }
+        clear({ state: ConnectionState.NOT_STARTED });
       },
-      { once: true },
-    );
-
+      reconnect,
+    };
+    current = connection;
     setStatus({ state: ConnectionState.CONNECTING });
     follow();
+    return connection.end;
   }
-
-  return { client, connect };
 }

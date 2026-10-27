@@ -2,16 +2,13 @@
 
 import type * as Protocol from "@marimo-team/client/protocol";
 import type { Atom, createStore } from "jotai/vanilla";
+import type { Document, NotebookBackend } from "../host";
 import { createDocumentState, type DocumentState } from "./state";
-import {
-  createDocumentSync,
-  type DocumentHost,
-  type DocumentSyncStatus,
-} from "./sync";
+import { createDocumentSync, type DocumentSyncStatus } from "./sync";
 
 export type { DocumentEdit, DocumentEditor } from "./state";
 export type { EditableCell, EditableDocument } from "./draft";
-export type { DocumentHost, DocumentSyncStatus } from "./sync";
+export type { DocumentSyncStatus } from "./sync";
 
 /** The editable document and its synchronization with the host. */
 export interface DocumentModel extends Pick<
@@ -28,20 +25,26 @@ export interface DocumentModel extends Pick<
 /** Create once per editing session; abort to stop editing and synchronization together. */
 export function createDocumentModel({
   store,
-  notebook,
+  documentAtom,
+  backendAtom,
   signal,
 }: {
   store: ReturnType<typeof createStore>;
-  notebook: DocumentHost;
+  /** The document the host last confirmed. */
+  documentAtom: Atom<Document | null>;
+  /** The backend that confirmed it, whose commands reach its host. */
+  backendAtom: Atom<NotebookBackend | null>;
   signal: AbortSignal;
 }): DocumentModel {
   signal.throwIfAborted();
-  const state = createDocumentState({
+  const state = createDocumentState({ store, source: documentAtom, signal });
+  const sync = createDocumentSync({
     store,
-    source: notebook.documentAtom,
+    documentAtom,
+    backendAtom,
+    state,
     signal,
   });
-  const sync = createDocumentSync({ store, notebook, state, signal });
   return {
     documentAtom: state.documentAtom,
     editAtom: state.editAtom,

@@ -78,6 +78,7 @@ import {
   areChildSchemasResolved,
   areSchemasResolved,
   areTablesResolved,
+  fullyQualifiedTableName,
   isSchemaless,
   schemaSubtreeMatchesSearch,
   shouldExpandDatabaseForSearch,
@@ -284,6 +285,7 @@ export const DataSources: React.FC = () => {
         {hasSearch && (
           <button
             type="button"
+            aria-label="Clear table search"
             className="float-right border-b px-2 m-0 h-full hover:bg-accent hover:text-accent-foreground"
             onClick={() => setSearchValue("")}
           >
@@ -636,7 +638,7 @@ const SchemaNode: React.FC<SchemaNodeProps> = (props) => {
   const [prevSearchValue, setPrevSearchValue] = React.useState(searchValue);
   const [prevExpandForSearch, setPrevExpandForSearch] =
     React.useState(expandForSearch);
-  const uniqueValue = `${databaseName}:${schemaPath.join(".")}`;
+  const uniqueValue = JSON.stringify(["schema", databaseName, ...schemaPath]);
   const childSchemas = schema.child_schemas ?? [];
 
   // Re-sync when the query changes or when newly resolved data turns this
@@ -1094,9 +1096,7 @@ const DatasetColumnItem: React.FC<{
               column={column}
               onAddColumnChart={handleAddColumn}
               preview={columnsPreviews.get(
-                sqlTableContext
-                  ? `${sqlTableContext.database}.${sqlTableContext.schema}.${table.name}:${column.name}`
-                  : `${table.name}:${column.name}`,
+                `${fullyQualifiedTableName(sqlTableContext, table.name)}:${column.name}`,
               )}
               sqlTableContext={sqlTableContext}
             />

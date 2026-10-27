@@ -12,7 +12,7 @@ import type {
   NotificationMessageData,
   NotificationPayload,
 } from "@/core/kernel/messages";
-import { useNotebookClient } from "@/core/websocket/useNotebookClient";
+import { useNotebookReplica } from "@/core/websocket/useNotebookReplica";
 import { renderHTML } from "@/plugins/core/RenderHTML";
 import {
   handleWidgetMessage,
@@ -75,7 +75,6 @@ import {
 import { useStorageActions } from "../storage/state";
 import { useVariablesActions } from "../variables/state";
 import type { VariableName } from "../variables/types";
-import { isWasm } from "../wasm/utils";
 import { WebSocketClosedReason, ConnectionState } from "./types";
 
 const SUPPORTS_LAZY_KERNELS = true;
@@ -409,7 +408,7 @@ export function useNotebookSession(opts: {
       variant: "danger",
     });
   };
-  const notebook = useNotebookClient({
+  const replica = useNotebookReplica({
     static: isStaticNotebook(),
     transportType,
     url: () =>
@@ -418,8 +417,10 @@ export function useNotebookSession(opts: {
         : runtimeManager.getWsURL(sessionId).toString(),
     // SSE uses headers for auth. WebSockets carry the token in the URL.
     headers: () => runtimeManager.headers(),
+    notebookUrl: (notebookId) => runtimeManager.getNotebookURL(notebookId),
+    // Only the host's transports read the URL, so static and WASM never wait.
     waitUntilReady: async () => {
-      if (!isStaticNotebook() && !isWasm() && !runtimeManager.isSameOrigin) {
+      if (!runtimeManager.isSameOrigin) {
         await runtimeManager.waitForHealthy();
       }
     },
@@ -437,7 +438,7 @@ export function useNotebookSession(opts: {
   // Subscribe before passive connection setup: static/WASM transports can emit synchronously.
   useLayoutEffect(() => {
     const updateConnection = () => {
-      const status = store.get(notebook.connectionAtom);
+      const status = store.get(replica.connectionAtom);
       if (status.state === ConnectionState.NOT_STARTED) {
         return;
       }
@@ -468,16 +469,16 @@ export function useNotebookSession(opts: {
         return status;
       });
     };
-    const unsubscribe = store.sub(notebook.connectionAtom, updateConnection);
+    const unsubscribe = store.sub(replica.connectionAtom, updateConnection);
     updateConnection();
     return unsubscribe;
   }, [
-    notebook,
+    replica,
     store,
     setConnection,
     setKernelStartupError,
     updateStartupProgress,
   ]);
 
-  return { notebook, connection, reconnect: notebook.reconnect };
+  return { replica, connection, reconnect: replica.reconnect };
 }
