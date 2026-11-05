@@ -182,6 +182,7 @@ class RuntimeConfig(TypedDict):
     std_stream_max_bytes: int
     pythonpath: NotRequired[list[str]]
     dotenv: NotRequired[list[str]]
+    sql_default_limit: NotRequired[int | None]
     default_sql_output: SqlOutputType
     default_auto_download: NotRequired[list[ExportType]]
     default_csv_encoding: NotRequired[str]
@@ -252,11 +253,13 @@ class ServerConfig(TypedDict):
         `MARIMO_SERVER_TRANSPORT` environment variable. `"websocket"`
         (default) uses the `/ws` WebSocket endpoint; `"sse"` uses
         server-sent events over HTTP, for deployments behind proxies or
-        services that do not support WebSockets. Terminal, LSP, and
-        real-time collaboration still require WebSockets; RTC is disabled
-        when using `"sse"`.
+        services that do not support WebSockets. The terminal and LSP
+        still require WebSockets.
     """
 
+    skip_update_check: NotRequired[bool]
+    session_cookie_secure: NotRequired[bool]
+    session_secret: NotRequired[str]
     browser: Literal["default"] | str
     follow_symlink: bool
     disable_file_downloads: NotRequired[bool]
@@ -653,12 +656,13 @@ class ExperimentalConfig(TypedDict, total=False):
     """
     Configuration for experimental features.
 
-    Features exposed on the frontend must match the frontend config.
+    Features exposed on the frontend must match the frontend config. A key
+    for a removed feature, such as `rtc_v2`, still loads and does nothing;
+    the server warns about it at startup.
     """
 
     markdown: bool  # Used in playground (community cloud)
     wasm_layouts: bool  # Used in playground (community cloud)
-    rtc_v2: bool
     isolate_apps: bool
     debugger: bool  # Live frame-watching debugger (gutter breakpoints + pdb)
     line_timing: bool  # Active-line highlight + per-line timer (sys.settrace)
