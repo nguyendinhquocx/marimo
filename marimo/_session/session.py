@@ -437,10 +437,6 @@ class SessionImpl(Session):
         deliver_reply(queue.queue_manager.input_queue, reply)
         self.session_view.add_stdin(reply.value, input_id=reply.input_id)
 
-    def put_input(self, text: str) -> None:
-        """Put an input() request in the input queue."""
-        self._event_bus.emit_received_stdin(self, text)
-
     def disconnect_consumer(self, session_consumer: SessionConsumer) -> None:
         """
         Stop the session consumer but keep the kernel running.
@@ -545,7 +541,7 @@ class SessionImpl(Session):
         self.put_control_request(
             CreateNotebookCommand(
                 execution_requests=tuple(execution_requests),
-                cell_ids=tuple(app.cell_manager.cell_ids()),
+                cell_ids=(),
                 set_ui_element_value_request=UpdateUIElementCommand(
                     object_ids=request.object_ids,
                     values=request.values,

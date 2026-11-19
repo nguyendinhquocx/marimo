@@ -12,7 +12,6 @@ export function createErrorToastingRequests(
   const MESSAGES: Record<RequestKey, string> = {
     sendComponentValues: "Failed update value",
     sendModelValue: "Failed to update model value",
-    sendInstantiate: "Failed to instantiate",
     sendFunctionRequest: "Failed to send function request",
     sendRestart: "Failed to restart",
     sendRunScratchpad: "Failed to run scratchpad",
@@ -24,7 +23,6 @@ export function createErrorToastingRequests(
     sendCodeCompletionRequest: "Failed to complete code",
     saveUserConfig: "Failed to save user config",
     saveAppConfig: "Failed to save app config",
-    sendStdin: "Failed to send stdin",
     readCode: "Failed to read code",
     readSnippets: "Failed to fetch snippets",
     previewDatasetColumn: "Failed to fetch data sources",

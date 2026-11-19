@@ -12,11 +12,15 @@
 export {
   cellExecutionInputsAtom,
   cellFreshnessAtom,
+  cellOutlineAtom,
+  cellOutputAtom,
   cellOutputInputsAtom,
+  cellOutputsAtom,
   clearCellOutputs,
   notebookIsRunningAtom,
   notebookQueuedOrRunningCountAtom,
   observeCellMessage,
+  releaseCellOutputAtoms,
   runtimeStatusAtom,
   waitForRuntimeRunning,
 } from "./atoms";
@@ -27,13 +31,17 @@ export { runCells, syncEdits } from "./run";
 export {
   useCellExecution,
   useCellFreshness,
+  useCellHasResult,
   useCellOutline,
   useCellOutput,
+  useCellPresentation,
+  useShowChangedInputs,
   useScratchOutput,
 } from "./hooks";
 export {
   type CellError,
   type CellOutput,
+  cellOutputsView,
   cellOutputView,
   type HostDiagnostic,
   scratchOutputView,

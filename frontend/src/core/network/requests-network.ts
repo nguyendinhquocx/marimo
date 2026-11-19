@@ -108,15 +108,6 @@ export function createNetworkRequests(): EditRequests & RunRequests {
         })
         .then(handleResponseReturnNull);
     },
-    sendInstantiate: async (request) => {
-      await waitForConnectionOpen();
-      return getClient()
-        .POST("/api/kernel/instantiate", {
-          body: request,
-          params: getParams(),
-        })
-        .then(handleResponseReturnNull);
-    },
     sendCodeCompletionRequest: async (request) => {
       await waitForConnectionOpen();
       return getClient()
@@ -153,14 +144,6 @@ export function createNetworkRequests(): EditRequests & RunRequests {
     sendFunctionRequest: (request) => {
       return getClient()
         .POST("/api/kernel/function_call", {
-          body: request,
-          params: getParams(),
-        })
-        .then(handleResponseReturnNull);
-    },
-    sendStdin: (request) => {
-      return getClient()
-        .POST("/api/kernel/stdin", {
           body: request,
           params: getParams(),
         })
