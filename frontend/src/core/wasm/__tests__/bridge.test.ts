@@ -274,16 +274,13 @@ it("raises the interrupt buffer for a cancelled running run before the worker ta
     id: "run-1",
     notebook_id: "n1",
     runtime_id: "r1",
-    cells: [],
-    status: "running",
-    outcome: null,
-    started_at: "2026-10-01T09:20:11Z",
-    completed_at: null,
+    origin: { kind: "code", code: "pass" },
+    state: { status: "running", started_at: "2026-10-01T09:20:11Z" },
   };
   const replicaWith = (status: string) =>
     ({
       executionsAtom: atom({
-        runs: new Map([["run-1", { ...run, status }]]),
+        runs: new Map([["run-1", { ...run, state: { status } }]]),
         executions: new Map(),
         latest: new Map(),
       }),
@@ -326,16 +323,13 @@ it.each(["running", "completed", null])(
       id: "run-1",
       notebook_id: "n1",
       runtime_id: "r1",
-      cells: [],
-      status: "running",
-      outcome: null,
-      started_at: "2026-10-01T09:20:11Z",
-      completed_at: null,
+      origin: { kind: "code", code: "pass" },
+      state: { status: "running", started_at: "2026-10-01T09:20:11Z" },
     };
     const replicaWith = (status: string) =>
       ({
         executionsAtom: atom({
-          runs: new Map([["run-1", { ...run, status }]]),
+          runs: new Map([["run-1", { ...run, state: { status } }]]),
           executions: new Map(),
           latest: new Map(),
         }),
@@ -382,7 +376,7 @@ it.each(["running", "completed", null])(
           id: "sub",
           event: JSON.stringify({
             event: "run",
-            data: { run: { ...run, status } },
+            data: { run: { ...run, state: { status } } },
           }),
         });
       deliver("running");
@@ -406,11 +400,8 @@ it("raises the interrupt buffer once a run cancelled while queued starts", async
     id: "run-1",
     notebook_id: "n1",
     runtime_id: "r1",
-    cells: [],
-    status: "queued",
-    outcome: null,
-    started_at: null,
-    completed_at: null,
+    origin: { kind: "code", code: "pass" },
+    state: { status: "queued" },
   };
   store.set(activeNotebookReplicaAtom, {
     executionsAtom: atom({
@@ -427,7 +418,7 @@ it("raises the interrupt buffer once a run cancelled while queued starts", async
       id: "sub",
       event: JSON.stringify({
         event: "run",
-        data: { run: { ...run, status } },
+        data: { run: { ...run, state: { status } } },
       }),
     });
   try {

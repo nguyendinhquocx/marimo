@@ -177,6 +177,7 @@ class Scheduled:
     """The runtime scheduled a run independently of a host API request."""
 
     run_id: protocol.RunId
+    origin: protocol.RunCodeOrigin | protocol.RunRuntimeOrigin
 
 
 @dataclass(frozen=True)
@@ -215,6 +216,13 @@ class Completed:
 
 
 @dataclass(frozen=True)
+class ConsoleCleared:
+    """Remove this execution's console and side-effect displays."""
+
+    execution_id: protocol.ExecutionId
+
+
+@dataclass(frozen=True)
 class Produced:
     """An item produced by an execution.
 
@@ -240,7 +248,7 @@ class Unbound:
 
 @dataclass(frozen=True)
 class Displayed:
-    """Replace a value display while its execution's result is retained."""
+    """Set an execution's output while its result is retained."""
 
     execution_id: protocol.ExecutionId
     display: protocol.DisplayData | None
@@ -267,6 +275,7 @@ Message = (
     | Planned
     | Started
     | Completed
+    | ConsoleCleared
     | Produced
     | Unbound
     | Displayed

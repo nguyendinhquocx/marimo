@@ -35,8 +35,24 @@ function cell(
   };
 }
 
+const SUCCEEDED: Protocol.Outcome = { kind: "succeeded" };
+
+/** A completed state that read `depends_on`. */
+function completed(
+  depends_on: Protocol.ExecutionCompleted["depends_on"] = {},
+  outcome: Protocol.Outcome = SUCCEEDED,
+): Protocol.ExecutionCompleted {
+  return {
+    status: "completed",
+    started_at: T0,
+    completed_at: T1,
+    outcome,
+    depends_on,
+  };
+}
+
 function record(
-  overrides: Partial<Protocol.Execution> & {
+  fields: Partial<Protocol.Execution> & {
     id: string;
     cell_id: string;
     code_fingerprint: string;
@@ -46,13 +62,8 @@ function record(
     run_id: "run-1",
     runtime_id: "r1",
     caused_by: null,
-    code: null,
-    depends_on: {},
-    status: "completed",
-    outcome: { kind: "value", display: null },
-    started_at: T0,
-    completed_at: T1,
-    ...overrides,
+    state: completed(),
+    ...fields,
   };
 }
 
@@ -77,6 +88,7 @@ function execution(
 ): Execution {
   return {
     record: rec,
+    output: null,
     outputVersion: 0,
     items: new Map(),
     variables: new Map(variables.map((v) => [v.id, v])),
@@ -109,7 +121,11 @@ function inputs({
   );
   for (const result of results) {
     if (result.cell_id !== null) {
-      retained.set(result.cell_id, { record: result, outputVersion: 0 });
+      retained.set(result.cell_id, {
+        record: result,
+        output: null,
+        outputVersion: 0,
+      });
     }
   }
   return {
@@ -130,7 +146,7 @@ const e13 = record({
   id: "e13",
   cell_id: "k7f2",
   code_fingerprint: K7F2_FINGERPRINT,
-  depends_on: { x: { execution: "e12", update: 0 } },
+  state: completed({ x: { execution: "e12", update: 0 } }),
 });
 
 describe("cellFreshness", () => {
@@ -206,7 +222,7 @@ describe("cellFreshness", () => {
       id: "e15",
       cell_id: "m",
       code_fingerprint: "aaaa111122223333",
-      depends_on: { y: { execution: "e13", update: 0 } },
+      state: completed({ y: { execution: "e13", update: 0 } }),
     });
     const state = inputs({
       cells: [c3, k7f2, m],
@@ -248,10 +264,7 @@ describe("cellFreshness", () => {
       id: "e14",
       cell_id: "c3",
       code_fingerprint: C3_FINGERPRINT,
-      status: "queued",
-      outcome: null,
-      started_at: null,
-      completed_at: null,
+      state: { status: "queued" },
     });
     const state = inputs({
       cells: [c3, k7f2],
@@ -275,7 +288,7 @@ describe("cellFreshness", () => {
       id: "e20",
       cell_id: "k7f2",
       code_fingerprint: K7F2_FINGERPRINT,
-      depends_on: { y: null },
+      state: completed({ y: null }),
     });
     const unbound = inputs({
       cells: [c3, k7f2],
@@ -301,10 +314,10 @@ describe("cellFreshness", () => {
       id: "e21",
       cell_id: "k7f2",
       code_fingerprint: "stale",
-      depends_on: {
+      state: completed({
         x: { execution: "e12", update: 0 },
         z: { execution: "e30", update: 0 },
-      },
+      }),
     });
     const state = inputs({
       cells: [c3, k7f2],
@@ -324,13 +337,15 @@ describe("cellFreshness", () => {
       id: "e22",
       cell_id: "k7f2",
       code_fingerprint: K7F2_FINGERPRINT,
-      outcome: {
-        kind: "skipped",
-        reason: "upstream-failed",
-        message: "",
-        related: [],
-      },
-      depends_on: { x: { execution: "e12", update: 0 } },
+      state: completed(
+        { x: { execution: "e12", update: 0 } },
+        {
+          kind: "skipped",
+          reason: "upstream-failed",
+          message: "",
+          related: [],
+        },
+      ),
     });
     const state = inputs({
       cells: [c3, k7f2],
@@ -365,18 +380,25 @@ describe("cellFreshness", () => {
         cell_id: "k7f2",
         runtime_id: "r2",
         code_fingerprint: K7F2_FINGERPRINT,
-        depends_on: { x: null },
-        started_at: "2026-10-01T09:21:00Z",
-        completed_at: "2026-10-01T09:21:01Z",
+        state: {
+          ...completed({ x: null }),
+          started_at: "2026-10-01T09:21:00Z",
+          completed_at: "2026-10-01T09:21:01Z",
+        },
       });
       const binder = record({
         id: "binder-r3",
         cell_id: "c3",
         runtime_id: "r3",
         code_fingerprint: C3_FINGERPRINT,
-        status,
-        started_at: "2026-10-01T09:22:00Z",
-        completed_at: status === "completed" ? "2026-10-01T09:22:01Z" : null,
+        state:
+          status === "completed"
+            ? {
+                ...completed(),
+                started_at: "2026-10-01T09:22:00Z",
+                completed_at: "2026-10-01T09:22:01Z",
+              }
+            : { status, started_at: "2026-10-01T09:22:00Z" },
       });
       const state = inputs({
         cells: [c3, k7f2],
@@ -400,7 +422,7 @@ describe("cellFreshness", () => {
       cell_id: "k7f2",
       runtime_id: "r2",
       code_fingerprint: K7F2_FINGERPRINT,
-      depends_on: { x: null },
+      state: completed({ x: null }),
     });
     const retained = inputs({
       cells: [c3, k7f2],
@@ -437,10 +459,7 @@ describe("cellFreshness", () => {
         id: "e14",
         cell_id: "c3",
         code_fingerprint: "ffff000011112222",
-        status,
-        outcome: null,
-        started_at: status === "running" ? T0 : null,
-        completed_at: null,
+        state: status === "running" ? { status, started_at: T0 } : { status },
       });
       const state = inputs({
         cells: [c3],
@@ -461,9 +480,7 @@ describe("cellFreshness", () => {
       id: "e14",
       cell_id: "c3",
       code_fingerprint: "ffff000011112222",
-      status: "running",
-      outcome: null,
-      completed_at: null,
+      state: { status: "running", started_at: T0 },
     });
     const covered = inputs({
       cells: [edited, k7f2],

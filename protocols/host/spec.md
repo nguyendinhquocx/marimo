@@ -133,26 +133,43 @@ A **run** groups a cycle of work and the reactive evaluations it causes. An
 within that cycle. Clients can follow individual execution results and the
 overall progress of a run.
 
+A run's `origin` records what the run was given when it was created, which is
+the cells a client asked for or the scratch code a client submitted.
+
+    Run { ..., origin: { kind: "cells", cell_ids } | { kind: "code", code } | { kind: "runtime" } }
+
 ```text
 Notebook
 │
-├── Run A · evaluate a cell
+├── Run A · origin cells · evaluate a cell
 │   ├── Cell execution · the requested cell
 │   ├── Cell execution · a dependent cell
 │   └── Cell execution · another dependent cell
 │
-└── Run B · evaluate scratch code
+└── Run B · origin code · evaluate scratch code
     └── Scratch execution
 ```
 
-Runs and executions move through `queued`, `running`, and `completed`.
+Runs and executions move through `queued`, `running`, and `completed`. Each
+carries its status in `state` together with the fields that status has, so a
+queued run has no start time and only a completed one has an outcome. A
+completed state does not change.
+
+    RunState       { status: "queued" }
+                 | { status: "running", started_at }
+                 | { status: "completed", started_at, completed_at, outcome }
+
+    ExecutionState { status: "queued" }
+                 | { status: "running", started_at }
+                 | { status: "completed", started_at, completed_at, outcome, depends_on }
+
 Hosts MUST complete a run only after its executions have ended and scheduling
 for that cycle has finished. An error in one execution may occur while others
 are still working. An execution that did not evaluate because of other work in
 the notebook, such as a dependent of a cell that raised or that stopped the
 cycle on purpose, or a queued execution that a later one of the same cell
 replaced, completes with the outcome `skipped`, which names the reason and the
-cells involved. A skipped execution has no value, binds no variables, and does
+cells involved. A skipped execution sets no output, binds no variables, and does
 not fail its run.
 
 A host publishes an execution as `queued` when the runtime schedules the cell,
@@ -163,21 +180,22 @@ then on. A queued execution that will not run completes without starting, as
 
 An execution can also lead to a later run. For example, a cell may create a UI
 element that a user later interacts with, triggering reactive evaluation. That
-work belongs to a new run and does not extend the original run's lifetime.
+work belongs to a new run and does not extend the original run's lifetime. The
+runtime schedules the new run itself, so its origin is `runtime`.
 
 ```text
 Notebook
 │
-├── Run A · evaluate a cell
+├── Run A · origin cells · evaluate a cell
 │   └── Cell execution A1 · create a UI element
 │
-└── Run B · respond to a later UI interaction
+└── Run B · origin runtime · respond to a later UI interaction
     ├── Cell execution · a dependent cell
     └── Cell execution · another dependent cell
 ```
 
-An execution's results include its outcome, **console** output, **display**
-items, **inputs**, and the **variables** a cell bound. Results can remain
+An execution's results include its outcome, its **output**, **console**
+output, **display** items, **inputs**, and the **variables** a cell bound. Results can remain
 available after the runtime stops or be restored from storage. Hosts choose
 how long to retain results and SHOULD keep ephemeral results briefly after
 completion to allow reconnection.
@@ -189,11 +207,21 @@ execution completes, as long as its results remain retained. Input requires a
 running execution, because the host must still be able to accept an answer or
 interrupt the work that is waiting for it.
 
-Background work may also replace or clear a value outcome's display while the
-execution is retained. Such updates MUST preserve its completed status,
-timestamps, and dependency revisions, and MUST NOT change a non-value outcome
-into a value. Updates from a removed execution MUST NOT affect a newer
-execution of the same cell.
+An execution's **output** is what its code shows as its result, such as the
+value of a cell's last expression. It is an item of its own, so the execution
+is not sent again when it changes.
+
+    Output { id, execution_id, media }
+
+An execution has no output item until its code first sets one, and the host
+then replaces that item in place. Its `media` is null when the code set the
+output to nothing or cleared it. For example, a cell that runs again has no
+output until it shows something, so a client can keep the previous result
+visible until then, and blank it when the new execution clears its output.
+
+Background work may also replace an output while its execution is retained,
+including after the execution completes. Updates from a removed execution MUST
+NOT affect a newer execution of the same cell.
 
 ### Inputs
 
@@ -253,7 +281,7 @@ has one latest execution on the stream and at most one that is not completed.
 An execution's `depends_on` records the variable revisions its result is valid
 against. A name that no retained cell execution had bound is recorded as null.
 
-    Execution { ..., depends_on: Record<Name, Revision | null> }
+    ExecutionState { status: "completed", ..., depends_on: Record<Name, Revision | null> }
 
 A completed cell execution is **current** when all of the following hold.
 
@@ -472,10 +500,10 @@ the notebook stream for all attached clients. Clients that need to observe the
 full sequence open the stream before submitting work. Hosts that offer execution
 MUST execute one run at a time, accept further requests as `queued` runs, and
 start them in the order they were accepted. A run's requested cells and their
-source are fixed when it is accepted, and the run's `cells` names them, so a
-client can tell which cells a queued run will reach before the runtime has
-planned their executions. Editing continues while runs are queued or running,
-and a result from source the document no longer has is outdated.
+source are fixed when it is accepted, and its `origin` names them in
+`cell_ids`, so a client can tell which cells a queued run will reach before the
+runtime has planned their executions. Editing continues while runs are queued
+or running, and a result from source the document no longer has is outdated.
 Completion means the work has finished, including any interruption that was
 requested.
 

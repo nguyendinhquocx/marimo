@@ -19,7 +19,7 @@ export {
   clearCellOutputs,
   notebookIsRunningAtom,
   notebookQueuedOrRunningCountAtom,
-  observeCellMessage,
+  setCellBlocked,
   releaseCellOutputAtoms,
   runtimeStatusAtom,
   waitForRuntimeRunning,
@@ -43,6 +43,7 @@ export {
   type CellOutput,
   cellOutputsView,
   cellOutputView,
+  executionSource,
   type HostDiagnostic,
   scratchOutputView,
 } from "./output";

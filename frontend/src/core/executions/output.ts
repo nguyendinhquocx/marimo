@@ -13,6 +13,7 @@ import type * as Protocol from "@marimo-team/client/protocol";
 import type { CellId } from "@/core/cells/ids";
 import type { MarimoError, OutputMessage } from "@/core/kernel/messages";
 import type { Executions, Result, Results } from "@/core/notebook/replica";
+import { completedAt, shown, startedAt } from "@/core/notebook/replica";
 
 /** A host error shown as its message and the cells involved. */
 export interface HostDiagnostic {
@@ -71,7 +72,7 @@ function seconds(iso: string | null): number {
 }
 
 function endedAt(record: Protocol.Execution): number {
-  return seconds(record.completed_at ?? record.started_at);
+  return seconds(completedAt(record) ?? startedAt(record));
 }
 
 function valueOutput(
@@ -186,9 +187,9 @@ function skippedOutput(
  * confirmed cell's fingerprint names the source the host holds, which is
  * the execution's own until an edit is confirmed.
  */
-function sourceOf(
+export function executionSource(
   record: Protocol.Execution,
-  cells: ReadonlyMap<Protocol.CellId, Protocol.Cell>,
+  cells: ReadonlyMap<Protocol.CellId, Protocol.Cell> = NO_CELLS,
 ): string | undefined {
   const cell = record.cell_id === null ? undefined : cells.get(record.cell_id);
   return cell !== undefined &&
@@ -199,34 +200,33 @@ function sourceOf(
 }
 
 /**
- * What an execution's outcome shows, or null for an empty value, with the
- * source it ran when `cells` still holds it.
+ * What a result shows, or null for an empty output, with the source it ran
+ * when `cells` still holds it.
  */
-export function outcomeOutput(
-  record: Protocol.Execution,
+export function resultOutput(
+  result: Result,
   cells: ReadonlyMap<Protocol.CellId, Protocol.Cell> = NO_CELLS,
 ): CellOutput | null {
-  const output = outcomeDisplay(record);
-  const code = sourceOf(record, cells);
+  const output = resultDisplay(result);
+  const code = executionSource(result.record, cells);
   return output === null || code === undefined ? output : { ...output, code };
 }
 
-function outcomeDisplay(record: Protocol.Execution): CellOutput | null {
-  const outcome = record.outcome;
-  if (outcome === null) {
+function resultDisplay(result: Result): CellOutput | null {
+  const { record } = result;
+  const showing = shown(result);
+  if (showing === null) {
     return null;
   }
-  switch (outcome.kind) {
-    case "value":
-      return outcome.display === null
-        ? null
-        : valueOutput(record, outcome.display);
+  switch (showing.kind) {
+    case "output":
+      return showing.media === null ? null : valueOutput(record, showing.media);
     case "error":
-      return errorOutput(record, [cellError(outcome.error)]);
+      return errorOutput(record, [cellError(showing.error)]);
     case "interrupted":
       return errorOutput(record, [{ type: "interruption" }]);
     case "skipped":
-      return skippedOutput(record, outcome);
+      return skippedOutput(record, showing);
   }
 }
 
@@ -234,9 +234,9 @@ function outcomeDisplay(record: Protocol.Execution): CellOutput | null {
  * The execution whose outcome a cell shows: its running one once that has
  * shown something, else its result.
  *
- * A running execution's outcome is null until it shows something, so the
- * result stays up until then. Once it has shown, an empty display means
- * the cell cleared its output, and nothing shows. A result that says the
+ * A running execution has no output until it sets one, so the result stays
+ * up until then. Once it has, an empty output means the cell cleared it,
+ * and nothing shows. A result that says the
  * cell did not run comes down as soon as it does run.
  */
 export function shownExecution(
@@ -250,15 +250,16 @@ export function shownExecution(
       : inputs.executions.executions.get(latestId);
   if (
     latest !== undefined &&
-    latest.record.outcome !== null &&
-    latest.record.status !== "completed"
+    shown(latest) !== null &&
+    latest.record.state.status !== "completed"
   ) {
     return latest;
   }
   const result = inputs.results.get(id) ?? null;
   if (
-    latest?.record.status === "running" &&
-    result?.record.outcome?.kind === "skipped"
+    latest?.record.state.status === "running" &&
+    result !== null &&
+    shown(result)?.kind === "skipped"
   ) {
     return null;
   }
@@ -286,11 +287,11 @@ export function cellOutputView(
   inputs: CellOutputInputs,
   id: Protocol.CellId,
 ): CellOutput | null {
-  const shown = shownExecution(inputs, id);
-  if (shown === null || stillCleared(inputs.cleared.get(id), shown)) {
+  const showing = shownExecution(inputs, id);
+  if (showing === null || stillCleared(inputs.cleared.get(id), showing)) {
     return null;
   }
-  return outcomeOutput(shown.record, inputs.cells);
+  return resultOutput(showing, inputs.cells);
 }
 
 /**
@@ -320,7 +321,5 @@ export function cellOutputsView(
  * The latest scratch display, retained until a newer execution shows one.
  */
 export function scratchOutputView(executions: Executions): CellOutput | null {
-  return executions.scratch === null
-    ? null
-    : outcomeOutput(executions.scratch.record);
+  return executions.scratch === null ? null : resultOutput(executions.scratch);
 }

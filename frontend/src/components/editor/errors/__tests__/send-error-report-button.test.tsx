@@ -363,7 +363,11 @@ describe("SendErrorReportButton", () => {
     });
     const message = cellOutputView(
       {
-        ...MockExecutions.inputs(snapshot?.results ?? []),
+        ...MockExecutions.inputs(
+          (snapshot?.results ?? []).flatMap(({ execution, output }) =>
+            output === null ? [execution] : [execution, output],
+          ),
+        ),
         cleared: new Map(),
         cells: new Map(snapshot?.cells.map((cell) => [cell.id, cell])),
       },
@@ -436,11 +440,13 @@ describe("SendErrorReportButton", () => {
     const replica = MockExecutions.seed(
       store,
       [
-        MockExecutions.failed(
-          CELL_ID,
-          { name: "NameError", message: MESSAGE },
-          { code_fingerprint: "ran" },
-        ),
+        {
+          ...MockExecutions.failed(CELL_ID, {
+            name: "NameError",
+            message: MESSAGE,
+          }),
+          code_fingerprint: "ran",
+        },
       ],
       null,
       confirmed("ran"),
@@ -486,7 +492,7 @@ describe("SendErrorReportButton", () => {
         },
         cellRuntime: {
           [CELL_ID]: {
-            consoleOutputs: [
+            embeddedConsole: [
               {
                 channel: "stderr",
                 mimetype: "application/vnd.marimo+traceback",

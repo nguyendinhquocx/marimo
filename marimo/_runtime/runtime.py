@@ -46,6 +46,7 @@ from marimo._dependencies.dependencies import DependencyManager
 from marimo._entrypoints.registry import EntryPointRegistry
 from marimo._lint.validate_graph import check_for_errors
 from marimo._messaging.cell_output import CellChannel
+from marimo._messaging.command_output import command_console
 from marimo._messaging.context import (
     EXECUTION_CTX,
     RUN_ID_CTX,
@@ -62,7 +63,9 @@ from marimo._messaging.errors import (
 )
 from marimo._messaging.input import InputReply
 from marimo._messaging.notification import (
+    CallbackOutputNotification,
     HumanReadableStatus,
+    PdbOutputNotification,
     RemoveUIElementsNotification,
     UIElementMessageNotification,
     VariableDeclarationNotification,
@@ -76,6 +79,7 @@ from marimo._messaging.notification_utils import (
     broadcast_notification,
 )
 from marimo._messaging.streams import (
+    PdbInput,
     QueuePipe,
     ThreadSafeStderr,
     ThreadSafeStdin,
@@ -2193,8 +2197,16 @@ class Kernel:
         ):
             return
 
-        with self._install_execution_context(cell_id):
-            self.debugger.post_mortem_by_cell_id(cell_id)
+        with (
+            command_console(cell_id, PdbOutputNotification),
+            self._install_execution_context(cell_id),
+        ):
+            self.debugger.post_mortem_by_cell_id(
+                cell_id,
+                stdin=PdbInput(self.stream, cell_id)
+                if isinstance(self.stream, ThreadSafeStream)
+                else None,
+            )
 
     @kernel_tracer.start_as_current_span("rename_file")
     async def rename_file(self, filename: str) -> None:
@@ -2475,9 +2487,12 @@ class Kernel:
                 LOGGER.debug("Could not find UIElement with id %s", object_id)
                 continue
 
-            with self._install_execution_context(
-                ui_element_registry.get_cell(object_id),
-                setting_element_value=True,
+            cell_id = ui_element_registry.get_cell(object_id)
+            with (
+                command_console(cell_id, CallbackOutputNotification),
+                self._install_execution_context(
+                    cell_id, setting_element_value=True
+                ),
             ):
                 try:
                     component._update(value)
@@ -2669,6 +2684,7 @@ class Kernel:
             found = True
             LOGGER.debug("Executing RPC %s", request)
             with (
+                command_console(function.cell_id, CallbackOutputNotification),
                 self._install_execution_context(cell_id=function.cell_id),
                 ctx.provide_ui_ids(str(uuid4())),
             ):

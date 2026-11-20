@@ -11,6 +11,8 @@ import {
 } from "@marimo-team/client";
 import type {
   Attachment,
+  Execution as HostExecution,
+  Output as HostOutput,
   NotebookOutput,
   Runtime,
 } from "@marimo-team/client/protocol";
@@ -25,6 +27,7 @@ import {
 import { attachments } from "./resources/attachments";
 import { type Document, document } from "./resources/document";
 import {
+  type Item,
   type Executions,
   executions,
   resumeResults,
@@ -35,10 +38,9 @@ import { runtime } from "./resources/runtime";
 /**
  * The kinds the editor reads, with marimo's own notifications.
  *
- * Console and display items stay out until the editor reads outputs from
- * the replica. The native notifications still carry them.
+ * Execution items provide the console, side-effect displays and input prompts.
  */
-const TYPES = [
+export const EDITOR_EVENT_TYPES = [
   "notebook",
   "cell",
   "document",
@@ -46,12 +48,15 @@ const TYPES = [
   "runtime",
   "run",
   "execution",
+  "console",
+  "display",
   "input",
+  "output",
   "variable",
   "marimo",
 ] as const;
 
-type EditorEvent = NotebookEvent<(typeof TYPES)[number]>;
+type EditorEvent = NotebookEvent<(typeof EDITOR_EVENT_TYPES)[number]>;
 
 /** A native marimo notification, passed through without interpretation. */
 const MarimoMessage = z.object({ marimo: z.unknown() });
@@ -60,6 +65,8 @@ const MarimoMessage = z.object({ marimo: z.unknown() });
 export interface NotebookReplica {
   /** Connection status, independent of application session readiness. */
   readonly connectionAtom: Atom<ConnectionStatus>;
+  /** Local generation of the open stream. Opening or resetting a stream starts a new one. */
+  readonly generationAtom: Atom<number>;
   /** Identity and capabilities, available while the stream is connected and ready. */
   readonly notebookAtom: Atom<NotebookOutput | null>;
   /**
@@ -114,6 +121,12 @@ export interface NotebookReplica {
     options: {
       /** Handle a native marimo notification. Its payload has not been validated. */
       onNotification: (notification: unknown) => void;
+      /** Observe an item for live logs and virtual files in an export. */
+      onItem?: (record: HostExecution, item: Item, live: boolean) => void;
+      /** Observe restored executions and live status changes for execution history. */
+      onExecution?: (record: HostExecution, lifecycleChanged: boolean) => void;
+      /** Observe outputs as they arrive, including retained ones on reconnect. */
+      onOutput?: (output: HostOutput, execution: HostExecution) => void;
     },
   ): () => void;
   /** Restore the current connection after its stream closed, if the host is healthy. */
@@ -160,6 +173,7 @@ export function createNotebookReplica(
   const connectionAtom = atom<ConnectionStatus>({
     state: ConnectionState.NOT_STARTED,
   });
+  const generationAtom = atom(0);
   // One atom holds the whole stream, which resource atoms derive from.
   const reducer = createNotebookReducer({
     document,
@@ -229,6 +243,7 @@ export function createNotebookReplica(
               executions: resumeResults(
                 next.resources.executions,
                 retained.resources.executions,
+                next.resources.runtime?.id,
               ),
             },
           };
@@ -257,6 +272,7 @@ export function createNotebookReplica(
 
   return {
     connectionAtom,
+    generationAtom,
     notebookAtom,
     documentAtom,
     shownDocumentAtom,
@@ -271,7 +287,12 @@ export function createNotebookReplica(
 
   function connect(
     connected: NotebookBackend,
-    { onNotification }: { onNotification: (notification: unknown) => void },
+    {
+      onNotification,
+      onExecution,
+      onItem,
+      onOutput,
+    }: Parameters<NotebookReplica["connect"]>[1],
   ) {
     current?.end();
     const lifetime = new AbortController();
@@ -279,16 +300,17 @@ export function createNotebookReplica(
     const checkHealth = connected.checkHealth ?? (async () => true);
     store.set(backendAtom, connected);
     const { transport } = connected;
-    let events: NotebookEvents<(typeof TYPES)[number]> | undefined;
+    let events: NotebookEvents<(typeof EDITOR_EVENT_TYPES)[number]> | undefined;
     let checkingHealth = false;
-
+    let pendingNotifications: unknown[] = [];
     /** Mirror one stream into the atoms until it closes. */
     function follow(cursor?: string) {
       if (cursor === undefined) {
+        pendingNotifications = [];
         setStream(reducer.initial);
       }
       const current = new NotebookEvents(transport, {
-        types: TYPES,
+        types: EDITOR_EVENT_TYPES,
         cursor,
         signal,
         // TODO(MO-8051): Gate editing and running on the notebook's operations
@@ -298,6 +320,7 @@ export function createNotebookReplica(
           if (status === "connecting") {
             setStatus({ state: ConnectionState.CONNECTING });
           } else if (status === "connected") {
+            store.set(generationAtom, (generation) => generation + 1);
             setStatus({ state: ConnectionState.OPEN });
           }
         },
@@ -321,28 +344,135 @@ export function createNotebookReplica(
 
     function stopMalformed(source: NotebookEvents<string>) {
       source.close();
+      pendingNotifications = [];
       // The cursor can already include an event the replica rejected.
       clear(malformed);
+    }
+
+    function observeExecution(
+      record: HostExecution,
+      lifecycleChanged: boolean,
+    ) {
+      try {
+        onExecution?.(record, lifecycleChanged);
+      } catch (error) {
+        Logger.error("Failed to handle execution update", error);
+      }
+    }
+
+    function observeOutput(output: HostOutput, record: HostExecution) {
+      try {
+        onOutput?.(output, record);
+      } catch (error) {
+        Logger.error("Failed to handle output update", error);
+      }
     }
 
     function apply(source: NotebookEvents<string>, event: EditorEvent) {
       if (event.event === "marimo") {
         const message = MarimoMessage.safeParse(event.data);
         if (message.success) {
-          onNotification(message.data.marimo);
+          const stream = store.get(streamAtom);
+          if (stream.phase === "snapshot" && stream.notebook !== null) {
+            pendingNotifications.push(message.data.marimo);
+          } else {
+            onNotification(message.data.marimo);
+          }
         } else {
           Logger.error("Failed to decode notebook message", event);
           stopMalformed(source);
         }
         return;
       }
+      if (event.event === "reset" || event.event === "notebook.removed") {
+        pendingNotifications = [];
+      }
+      const before = store.get(streamAtom);
+      const previous =
+        event.event === "execution"
+          ? before.resources.executions.executions.get(event.data.execution.id)
+          : undefined;
       try {
-        setStream(reducer.reduce(store.get(streamAtom), event));
+        setStream(reducer.reduce(before, event));
+        if (event.event === "reset") {
+          store.set(generationAtom, (generation) => generation + 1);
+        }
       } catch (error) {
         // An event the replica cannot apply, such as another notebook's.
         Logger.error("Failed to apply notebook event", error);
         stopMalformed(source);
         return;
+      }
+      const after = store.get(streamAtom);
+      if (event.event === "ready" && before.phase === "snapshot") {
+        for (const execution of after.resources.executions.executions.values()) {
+          observeExecution(execution.record, true);
+          if (execution.output) {
+            observeOutput(execution.output, execution.record);
+          }
+          if (onItem) {
+            for (const item of execution.items.values()) {
+              if (item.kind === "display") {
+                onItem(execution.record, item, false);
+              }
+            }
+          }
+        }
+        const notifications = pendingNotifications;
+        pendingNotifications = [];
+        for (const notification of notifications) {
+          if (signal.aborted) {
+            break;
+          }
+          try {
+            onNotification(notification);
+          } catch (error) {
+            queueMicrotask(() => {
+              throw error;
+            });
+          }
+        }
+        return;
+      }
+      if (after.phase !== "live") {
+        return;
+      }
+      const executions = after.resources.executions.executions;
+      switch (event.event) {
+        case "execution": {
+          const record = event.data.execution;
+          const changed = previous?.record.state.status !== record.state.status;
+          observeExecution(record, changed);
+          return;
+        }
+        case "output": {
+          const { output } = event.data;
+          const execution = executions.get(output.execution_id);
+          if (execution) {
+            observeOutput(output, execution.record);
+          }
+          return;
+        }
+        case "console":
+        case "display":
+        case "input": {
+          const item =
+            event.event === "console"
+              ? event.data.console
+              : event.event === "display"
+                ? event.data.display
+                : event.data.input;
+          const execution = executions.get(item.execution_id);
+          if (execution && onItem) {
+            const received = execution.items.get(item.id);
+            if (received) {
+              const live = !before.resources.executions.executions
+                .get(item.execution_id)
+                ?.items.has(item.id);
+              onItem(execution.record, received, live);
+            }
+          }
+        }
       }
     }
 

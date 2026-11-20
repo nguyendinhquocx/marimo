@@ -215,7 +215,7 @@ async def test_interrupt_waits_for_the_kernel_result(
     assert concluded[-1].outcome == (
         protocol.InterruptedOutcome()
         if takes_effect
-        else protocol.ValueOutcome(None)
+        else protocol.SucceededOutcome()
     )
     assert observed.messages[-1] == be.Done(
         protocol.RunId("run-1"), "interrupted" if takes_effect else "succeeded"
@@ -295,6 +295,9 @@ async def test_external_scratch_is_adopted_before_compilation(
         )
     )
     assert observed.kinds() == ["Scheduled", "Planned"]
+    assert observed.messages[0] == be.Scheduled(
+        protocol.RunId("browser"), protocol.RunCodeOrigin(code="3 * 3")
+    )
     planned = observed.messages[-1]
     assert isinstance(planned, be.Planned)
     execution = planned.executions[0]
@@ -313,6 +316,27 @@ async def test_external_scratch_is_adopted_before_compilation(
     session.broadcast(CompletedRunNotification(run_id="browser"))
     assert observed.messages[-1] == be.Done(
         protocol.RunId("browser"), "succeeded"
+    )
+
+
+async def test_a_run_the_kernel_schedules_on_its_own_has_a_runtime_origin(
+    manager: FakeManager, observed: Observed
+) -> None:
+    b = backend(manager, observed)
+    session = manager.next_session
+    b.adopt(RT1, session)
+    observed.messages.clear()
+    session.broadcast(
+        ExecutionNotification(
+            cell_id=CellId_t("a"),
+            phase="planned",
+            code_fingerprint=code_fingerprint("slider.value"),
+            execution_id="attempt",
+            run_id="reaction",
+        )
+    )
+    assert observed.messages[0] == be.Scheduled(
+        protocol.RunId("reaction"), protocol.RunRuntimeOrigin()
     )
 
 
@@ -670,7 +694,7 @@ async def test_cell_runs_queue_in_the_kernel_in_order(
     session.broadcast(CompletedRunNotification(run_id="run-2"))
     expected = [
         be.Completed(
-            protocol.ExecutionId("attempt-2"), protocol.ValueOutcome(None)
+            protocol.ExecutionId("attempt-2"), protocol.SucceededOutcome()
         ),
         be.Done(protocol.RunId("run-2"), "succeeded"),
     ]

@@ -5,12 +5,13 @@
 import type * as Protocol from "@marimo-team/client/protocol";
 import type { Execution, Executions, Results } from "@/core/notebook/replica";
 import { type Milliseconds, Time } from "@/utils/time";
+import { completedAt, startedAt as startedAtOf } from "@/core/notebook/replica";
 
 /** Where a cell is in its run. */
 export type CellRunStatus = "idle" | "queued" | "running";
 
 /** How a cell's last completed execution ended. */
-export type CellOutcome = "value" | "error" | "interrupted" | "skipped";
+export type CellOutcome = Protocol.Outcome["kind"];
 
 export interface CellExecutionView {
   readonly status: CellRunStatus;
@@ -54,11 +55,7 @@ export interface CellExecutionInputs {
 }
 
 export function outcomeOf(record: Protocol.Execution): CellOutcome | null {
-  const outcome = record.outcome;
-  if (outcome === null) {
-    return null;
-  }
-  return outcome.kind;
+  return record.state.status === "completed" ? record.state.outcome.kind : null;
 }
 
 function millis(iso: string | null): Milliseconds | null {
@@ -108,9 +105,10 @@ function awaited(inputs: CellExecutionInputs, id: Protocol.CellId): boolean {
     inputs.results.get(id)?.record.run_id;
   for (const run of inputs.executions.runs.values()) {
     if (
-      run.status !== "completed" &&
+      run.state.status !== "completed" &&
       run.id !== planned &&
-      run.cells.includes(id)
+      run.origin.kind === "cells" &&
+      run.origin.cell_ids.includes(id)
     ) {
       return true;
     }
@@ -125,20 +123,19 @@ export function cellExecutionView(
   const latest = latestOf(inputs.executions, id);
   const result = inputs.results.get(id)?.record ?? null;
   let status: CellRunStatus = "idle";
-  let startedAt = result === null ? null : millis(result.started_at);
-  if (latest !== null && latest.record.status !== "completed") {
-    status = latest.record.status;
-    startedAt = millis(latest.record.started_at) ?? startedAt;
+  const began = result === null ? null : startedAtOf(result);
+  const ended = result === null ? null : completedAt(result);
+  let startedAt = millis(began);
+  if (latest !== null && latest.record.state.status !== "completed") {
+    status = latest.record.state.status;
+    startedAt = millis(startedAtOf(latest.record)) ?? startedAt;
   } else if (awaited(inputs, id)) {
     status = "queued";
   }
   const settled = status === "idle";
   const duration =
-    settled &&
-    result !== null &&
-    result.started_at !== null &&
-    result.completed_at !== null
-      ? Time.parse(result.completed_at).since(Time.parse(result.started_at))
+    settled && began !== null && ended !== null
+      ? Time.parse(ended).since(Time.parse(began))
       : null;
   return {
     status,
@@ -156,13 +153,13 @@ export function cellExecutionView(
 /** Executions the host has not completed, cells and scratch alike. */
 function unfinished(executions: Executions): Execution[] {
   return [...executions.executions.values()].filter(
-    (execution) => execution.record.status !== "completed",
+    (execution) => execution.record.state.status !== "completed",
   );
 }
 
 export function anyRunning(executions: Executions): boolean {
   return unfinished(executions).some(
-    (execution) => execution.record.status === "running",
+    (execution) => execution.record.state.status === "running",
   );
 }
 
@@ -176,8 +173,8 @@ export function queuedOrRunningCount(inputs: CellExecutionInputs): number {
   );
   const named = new Set<Protocol.CellId>(inputs.requested);
   for (const run of inputs.executions.runs.values()) {
-    if (run.status !== "completed") {
-      for (const cellId of run.cells) {
+    if (run.state.status !== "completed" && run.origin.kind === "cells") {
+      for (const cellId of run.origin.cell_ids) {
         named.add(cellId);
       }
     }
@@ -194,7 +191,7 @@ export function queuedOrRunningCount(inputs: CellExecutionInputs): number {
 export function onlyScratchRunning(executions: Executions): boolean {
   return unfinished(executions).every(
     (execution) =>
-      execution.record.status !== "running" ||
+      execution.record.state.status !== "running" ||
       execution.record.cell_id === null,
   );
 }
@@ -204,16 +201,17 @@ export function scratchStatus(executions: Executions): CellRunStatus {
   const scratch = unfinished(executions).find(
     (execution) => execution.record.cell_id === null,
   );
-  if (scratch === undefined || scratch.record.status === "completed") {
+  if (scratch === undefined || scratch.record.state.status === "completed") {
     return "idle";
   }
-  return scratch.record.status;
+  return scratch.record.state.status;
 }
 
 /** Cells with a running execution, in the order the host reported them. */
 export function runningCellIds(executions: Executions): Protocol.CellId[] {
   return unfinished(executions).flatMap((execution) =>
-    execution.record.status === "running" && execution.record.cell_id !== null
+    execution.record.state.status === "running" &&
+    execution.record.cell_id !== null
       ? [execution.record.cell_id]
       : [],
   );

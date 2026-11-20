@@ -44,7 +44,7 @@ from marimo._runtime.layout.layout import (
     layout_config_to_data_uri,
 )
 from marimo._server.host import document as documents
-from marimo._server.host.events import notification_event, serialize_event
+from marimo._server.host.events import EditorNotifications, serialize_event
 from marimo._server.host.handover import Handover, Turn
 from marimo._server.host.translate import (
     RunTranslator,
@@ -377,7 +377,10 @@ class WorkerBackend:
         notification = deserialize_kernel_message(message)
         for reported in variable_messages(notification):
             self._observe(reported)
-        translator, reports = self._translators.feed(notification)
+        translator, reports = self._translators.feed(
+            notification,
+            view=self._session.session_view,
+        )
         for reported in reports:
             self._observe(reported)
         if translator is None:
@@ -496,6 +499,7 @@ class PyodideNotebook:
         subscription_id: str,
         cursor: str | None,
         emit: Callable[[str], None],
+        types: str | None = None,
     ) -> None:
         if self._closed:
             raise RuntimeError("The notebook is closed")
@@ -504,18 +508,26 @@ class PyodideNotebook:
             raise RuntimeError("The notebook is closed")
         self.refresh()
         self.unsubscribe(subscription_id)
+        kinds = set(types.split(",")) if types else None
+
+        notifications = EditorNotifications()
 
         def notify(notification: NotificationMessage) -> None:
-            emit(serialize_event(notification_event(self.id, notification)))
+            for event in notifications.events(
+                self.id, notification, self._session.session_view
+            ):
+                if event.wanted(kinds):
+                    emit(serialize_event(event))
 
         def consume(message: KernelMessage) -> None:
             notify(deserialize_kernel_message(message))
 
         # Snapshot and subscriptions are established in the same event-loop turn.
-        initial = self.host.events(cursor, notebook_id=self.id)
+        initial = self.host.events(cursor, notebook_id=self.id, types=kinds)
         unsubscribe = self.host.subscribe(
             lambda event: emit(serialize_event(event)),
             notebook_id=self.id,
+            types=kinds,
         )
         session = self._session
         session.consumers.append(consume)
@@ -536,7 +548,7 @@ class PyodideNotebook:
                     session.app_manager, view if session.instantiated else None
                 )
             )
-            for notification in view.snapshot_notifications():
+            for notification in view.snapshot_notifications(scope="editor"):
                 notify(notification)
         except BaseException:
             self.unsubscribe(subscription_id)

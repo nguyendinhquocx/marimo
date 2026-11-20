@@ -589,14 +589,61 @@ export const RunId = zod
 export type RunId = zod.input<typeof RunId>;
 export type RunIdOutput = zod.output<typeof RunId>;
 
-export const Lifecycle = zod
-  .enum(["queued", "running", "completed"])
+export const RunCellsOrigin = zod.object({
+  kind: zod.enum(["cells"]),
+  cell_ids: zod
+    .array(CellId)
+    .min(1)
+    .describe(
+      "The cells the run was requested for. Fixed when the run is accepted, so a client can tell which cells a queued run will reach before the runtime has planned their executions. Each one's execution in this run reports the fingerprint of the source accepted for it.",
+    ),
+});
+
+export type RunCellsOrigin = zod.input<typeof RunCellsOrigin>;
+export type RunCellsOriginOutput = zod.output<typeof RunCellsOrigin>;
+
+export const RunCodeOrigin = zod.object({
+  kind: zod.enum(["code"]),
+  code: zod
+    .string()
+    .describe(
+      "The submitted code, which the run's scratch execution evaluates.",
+    ),
+});
+
+export type RunCodeOrigin = zod.input<typeof RunCodeOrigin>;
+export type RunCodeOriginOutput = zod.output<typeof RunCodeOrigin>;
+
+export const RunRuntimeOrigin = zod.object({
+  kind: zod.enum(["runtime"]),
+});
+
+export type RunRuntimeOrigin = zod.input<typeof RunRuntimeOrigin>;
+export type RunRuntimeOriginOutput = zod.output<typeof RunRuntimeOrigin>;
+
+export const RunOrigin = zod
+  .union([RunCellsOrigin, RunCodeOrigin, RunRuntimeOrigin])
   .describe(
-    "Where a run or execution is in its lifecycle. An execution is\n`queued` until it starts, `running` while code executes, and\n`completed` once it has ended. A run is `queued` until its first\nexecution starts, `running` until its cycle has settled or been cut\nshort, and `completed` once no more work can join it. How either\nended is its `outcome`.\n",
+    "What a run was given when it was created, tagged on `kind`. A\n`cells` run was given the cells in `cell_ids`. A `code` run was\ngiven the code in `code`, which its scratch execution evaluates. A\n`runtime` run was given neither. The runtime scheduled it in\nresponse to a change, such as the cells that read a UI element\nafter its value changes. Other kinds are defined by later versions\nof this protocol.\n",
   );
 
-export type Lifecycle = zod.input<typeof Lifecycle>;
-export type LifecycleOutput = zod.output<typeof Lifecycle>;
+export type RunOrigin = zod.input<typeof RunOrigin>;
+export type RunOriginOutput = zod.output<typeof RunOrigin>;
+
+export const RunQueued = zod.object({
+  status: zod.enum(["queued"]),
+});
+
+export type RunQueued = zod.input<typeof RunQueued>;
+export type RunQueuedOutput = zod.output<typeof RunQueued>;
+
+export const RunRunning = zod.object({
+  status: zod.enum(["running"]),
+  started_at: Timestamp.describe("When the first execution started."),
+});
+
+export type RunRunning = zod.input<typeof RunRunning>;
+export type RunRunningOutput = zod.output<typeof RunRunning>;
 
 export const RunOutcome = zod
   .enum(["succeeded", "failed", "interrupted"])
@@ -607,30 +654,36 @@ export const RunOutcome = zod
 export type RunOutcome = zod.input<typeof RunOutcome>;
 export type RunOutcomeOutput = zod.output<typeof RunOutcome>;
 
+export const RunCompleted = zod.object({
+  status: zod.enum(["completed"]),
+  started_at: zod
+    .union([Timestamp, zod.null()])
+    .describe("When the first execution started. Null if none started."),
+  completed_at: Timestamp.describe("When the run ended."),
+  outcome: RunOutcome.describe(
+    "An execution failure does not complete a run while other work remains. Interruption must have taken effect, not merely been requested.",
+  ),
+});
+
+export type RunCompleted = zod.input<typeof RunCompleted>;
+export type RunCompletedOutput = zod.output<typeof RunCompleted>;
+
+export const RunState = zod
+  .union([RunQueued, RunRunning, RunCompleted])
+  .describe(
+    "Where a run is in its lifecycle, tagged on `status`. A run is\n`queued` until its first execution starts and `running` until the\ncycle has settled or been terminated. It is `completed` once all\nmember executions are terminal and no more can be scheduled in this\nrun, and that state is final. A run can complete with no executions.\n",
+  );
+
+export type RunState = zod.input<typeof RunState>;
+export type RunStateOutput = zod.output<typeof RunState>;
+
 export const Run = zod
   .object({
     id: RunId,
     notebook_id: NotebookId,
     runtime_id: RuntimeId.describe("The runtime that produced this run."),
-    cells: zod
-      .array(CellId)
-      .describe(
-        "The cells the run was requested for. Fixed when the run is accepted, so a client can tell which cells a queued run will reach before the runtime has planned their executions. Each one's execution in this run reports the fingerprint of the source accepted for it. Empty for scratch code and for a run the runtime scheduled itself.",
-      ),
-    status: Lifecycle.describe(
-      "Queued until the first execution starts, running until the cycle has settled or been terminated, and completed once all member executions are terminal and no more can be scheduled in this run. A run can complete with no executions.",
-    ),
-    outcome: zod
-      .union([RunOutcome, zod.null()])
-      .describe(
-        "Null until completed, then final. Published with the terminal status and completed_at. An execution failure does not complete a run while other work remains. Interruption must have taken effect, not merely been requested.",
-      ),
-    started_at: zod
-      .union([Timestamp, zod.null()])
-      .describe("When the first execution started. Null if none has started."),
-    completed_at: zod
-      .union([Timestamp, zod.null()])
-      .describe("When the run ended. Null until the run is `completed`."),
+    origin: RunOrigin,
+    state: RunState,
   })
   .describe(
     "One bounded cycle of notebook work initiated by an action. It\nincludes synchronous callbacks and reactive work owned and awaited\nby the runtime's scheduler. Context inherited by an independent task\nrecords provenance, not ownership of the cycle. The host completes it\nonly after all member executions have ended and scheduling for the\ncycle has finished. Completion fixes its status and execution membership.\nIndependently triggered later work starts another run, even when\nits cause belongs to an earlier run. Every consumer attached to\nthe notebook sees it.\n\nRetention is up to the host and independent of replay history.\nHosts SHOULD retain ephemeral results briefly after completion to\nallow reconnection. Runs, executions, and items each have removal\nevents; a cell result may outlive its run.\n",
@@ -680,54 +733,27 @@ export const ExecutionId = zod
 export type ExecutionId = zod.input<typeof ExecutionId>;
 export type ExecutionIdOutput = zod.output<typeof ExecutionId>;
 
-export const revisionUpdateMin = 0;
-
-export const Revision = zod
-  .object({
-    execution: ExecutionId.describe(
-      "The execution whose evaluation produced the value. Usually the variable's `execution_id`, and earlier when the runtime carried the value forward.",
-    ),
-    update: zod
-      .int()
-      .min(revisionUpdateMin)
-      .describe(
-        "How many times the value has been updated since it was produced. Zero at binding.",
-      ),
-  })
-  .describe(
-    "A variable's value at a point in time. Two revisions are equal\nwhen `execution` and `update` are equal. Clients compare\nrevisions for equality.\n",
-  );
-
-export type Revision = zod.input<typeof Revision>;
-export type RevisionOutput = zod.output<typeof Revision>;
-
-export const DisplayData = zod
-  .object({
-    mimetype: zod
-      .string()
-      .describe("The format of `data`, such as `text/html` or `image/png`."),
-    data: zod
-      .string()
-      .describe(
-        "The rendered value, embedded so clients can display it independently of the runtime. JSON mimetypes are encoded as text and binary mimetypes as base64.",
-      ),
-  })
-  .describe("A rendered value.");
-
-export type DisplayData = zod.input<typeof DisplayData>;
-export type DisplayDataOutput = zod.output<typeof DisplayData>;
-
-export const ValueOutcome = zod.object({
-  kind: zod.enum(["value"]),
-  display: zod
-    .union([DisplayData, zod.null()])
-    .describe(
-      "The value as last rendered. Replaced as it grows. Null when the code produced no value.",
-    ),
+export const ExecutionQueued = zod.object({
+  status: zod.enum(["queued"]),
 });
 
-export type ValueOutcome = zod.input<typeof ValueOutcome>;
-export type ValueOutcomeOutput = zod.output<typeof ValueOutcome>;
+export type ExecutionQueued = zod.input<typeof ExecutionQueued>;
+export type ExecutionQueuedOutput = zod.output<typeof ExecutionQueued>;
+
+export const ExecutionRunning = zod.object({
+  status: zod.enum(["running"]),
+  started_at: Timestamp.describe("When the code started executing."),
+});
+
+export type ExecutionRunning = zod.input<typeof ExecutionRunning>;
+export type ExecutionRunningOutput = zod.output<typeof ExecutionRunning>;
+
+export const SucceededOutcome = zod.object({
+  kind: zod.enum(["succeeded"]),
+});
+
+export type SucceededOutcome = zod.input<typeof SucceededOutcome>;
+export type SucceededOutcomeOutput = zod.output<typeof SucceededOutcome>;
 
 export const positionLineMin = 0;
 
@@ -760,6 +786,22 @@ export const Range = zod
 
 export type Range = zod.input<typeof Range>;
 export type RangeOutput = zod.output<typeof Range>;
+
+export const DisplayData = zod
+  .object({
+    mimetype: zod
+      .string()
+      .describe("The format of `data`, such as `text/html` or `image/png`."),
+    data: zod
+      .string()
+      .describe(
+        "The rendered value, embedded so clients can display it independently of the runtime. JSON mimetypes are encoded as text and binary mimetypes as base64.",
+      ),
+  })
+  .describe("A rendered value.");
+
+export type DisplayData = zod.input<typeof DisplayData>;
+export type DisplayDataOutput = zod.output<typeof DisplayData>;
 
 export const Related = zod
   .object({
@@ -856,13 +898,66 @@ export type SkippedOutcome = zod.input<typeof SkippedOutcome>;
 export type SkippedOutcomeOutput = zod.output<typeof SkippedOutcome>;
 
 export const Outcome = zod
-  .union([ValueOutcome, ErrorOutcome, InterruptedOutcome, SkippedOutcome])
+  .union([SucceededOutcome, ErrorOutcome, InterruptedOutcome, SkippedOutcome])
   .describe(
-    "How an execution ended, tagged on `kind`. A `value` carries the\nexecution's value as last rendered; while the execution is\nrunning it is the value so far, and it is final once the\nexecution is `completed`. An `error` carries the error that ended it.\nAn `interrupted` execution was cancelled before or during execution.\nA `skipped` execution did not evaluate because of another cell; it\nhas no value and binds no variables. Other kinds are defined by\nlater versions of this protocol.\n",
+    "How an execution ended, tagged on `kind`. A `succeeded` execution\nevaluated its code without raising, and what it showed is its\n`output` item. An `error` carries the error that ended it.\nAn `interrupted` execution was cancelled before or during execution.\nA `skipped` execution did not evaluate because of another cell; it\nhas no value and binds no variables. Other kinds are defined by\nlater versions of this protocol.\n",
   );
 
 export type Outcome = zod.input<typeof Outcome>;
 export type OutcomeOutput = zod.output<typeof Outcome>;
+
+export const revisionUpdateMin = 0;
+
+export const Revision = zod
+  .object({
+    execution: ExecutionId.describe(
+      "The execution whose evaluation produced the value. Usually the variable's `execution_id`, and earlier when the runtime carried the value forward.",
+    ),
+    update: zod
+      .int()
+      .min(revisionUpdateMin)
+      .describe(
+        "How many times the value has been updated since it was produced. Zero at binding.",
+      ),
+  })
+  .describe(
+    "A variable's value at a point in time. Two revisions are equal\nwhen `execution` and `update` are equal. Clients compare\nrevisions for equality.\n",
+  );
+
+export type Revision = zod.input<typeof Revision>;
+export type RevisionOutput = zod.output<typeof Revision>;
+
+export const ExecutionCompleted = zod.object({
+  status: zod.enum(["completed"]),
+  started_at: zod
+    .union([Timestamp, zod.null()])
+    .describe(
+      "When the code started executing. Null if the execution never started or the start time of a restored result is unknown.",
+    ),
+  completed_at: zod
+    .union([Timestamp, zod.null()])
+    .describe(
+      "When the execution ended. Null for a restored result whose store does not record it.",
+    ),
+  outcome: Outcome,
+  depends_on: zod
+    .record(zod.string(), zod.union([Revision, zod.null()]))
+    .describe(
+      "The variable revisions this result is valid against, keyed by name. Null for a name no retained cell execution had bound. Stamped as the execution ends.",
+    ),
+});
+
+export type ExecutionCompleted = zod.input<typeof ExecutionCompleted>;
+export type ExecutionCompletedOutput = zod.output<typeof ExecutionCompleted>;
+
+export const ExecutionState = zod
+  .union([ExecutionQueued, ExecutionRunning, ExecutionCompleted])
+  .describe(
+    "Where an execution is in its lifecycle, tagged on `status`. An\nexecution is `queued` until it starts, `running` while code\nexecutes, and `completed` once it has ended with its `outcome`.\n",
+  );
+
+export type ExecutionState = zod.input<typeof ExecutionState>;
+export type ExecutionStateOutput = zod.output<typeof ExecutionState>;
 
 export const Execution = zod
   .object({
@@ -885,38 +980,15 @@ export const Execution = zod
     cell_id: zod
       .union([CellId, zod.null()])
       .describe(
-        "The cell this execution belongs to. Null for scratch code, a cell outside the document.",
-      ),
-    code: zod
-      .union([zod.string(), zod.null()])
-      .describe(
-        "The submitted code for an execution with no cell. Null for a cell's execution; its source is available through the cell when the host exposes it.",
+        "The cell this execution belongs to. Null for a scratch execution, which evaluates the code in its run's `origin`.",
       ),
     code_fingerprint: CodeFingerprint.describe(
       "Fingerprint of the code the execution evaluates. Fixed when the execution is published, while it is still queued.",
     ),
-    depends_on: zod
-      .record(zod.string(), zod.union([Revision, zod.null()]))
-      .describe(
-        "The variable revisions this result is valid against, keyed by name. Null for a name no retained cell execution had bound. Empty while queued, stamped as the execution ends, and final from then on.",
-      ),
-    status: Lifecycle,
-    outcome: zod
-      .union([Outcome, zod.null()])
-      .describe(
-        "How the execution ended. Null while queued; while running, a value carries the display so far; final once completed.",
-      ),
-    started_at: zod
-      .union([Timestamp, zod.null()])
-      .describe(
-        "When the code started executing. Null while queued or if the execution completed before starting.",
-      ),
-    completed_at: zod
-      .union([Timestamp, zod.null()])
-      .describe("When the execution ended. Null until it is completed."),
+    state: ExecutionState,
   })
   .describe(
-    "One cell evaluated within a run, or scratch code evaluated once.\nIt moves through `queued`, `running`, and `completed`, and ends with\none outcome. Side effects belong to the execution whose context\nproduced them, and items can arrive after completion while the\nexecution remains retained. Each new input belongs to a running\nexecution. Input calls from completed or removed executions raise\n`EOFError` in the calling code. Exactly one of `cell_id` and `code`\nis null: a cell's execution carries the cell and no code, and a\nscratch execution carries its code and no cell.\n",
+    "One cell evaluated within a run, or scratch code evaluated once.\nIt moves through `queued`, `running`, and `completed`, and ends with\none outcome. Side effects belong to the execution whose context\nproduced them, and items can arrive after completion while the\nexecution remains retained. Each new input belongs to a running\nexecution. Input calls from completed or removed executions raise\n`EOFError` in the calling code. A scratch execution has no cell and\nevaluates the code in its run's `origin`.\n",
   );
 
 export type Execution = zod.input<typeof Execution>;
@@ -959,11 +1031,61 @@ export const ItemId = zod
   .string()
   .min(1)
   .describe(
-    "Identifies a console, display, input, or variable item uniquely within the host. Sending an item again with the same id replaces it.",
+    "Identifies an output, console, display, input, or variable item uniquely within the host. Sending an item again with the same id replaces it.",
   );
 
 export type ItemId = zod.input<typeof ItemId>;
 export type ItemIdOutput = zod.output<typeof ItemId>;
+
+export const Output = zod
+  .object({
+    id: ItemId,
+    execution_id: ExecutionId,
+    media: zod
+      .union([DisplayData, zod.null()])
+      .describe(
+        "The output as last rendered. Null when the code set it to nothing or cleared it.",
+      ),
+  })
+  .describe(
+    "What an execution's code shows as its result, such as the value of\na cell's last expression. An execution has at most one, published\nonce the code first sets it. A producer replaces it by sending it\nagain with the same id, including after the execution completes,\nand it is removed with its execution.\n",
+  );
+
+export type Output = zod.input<typeof Output>;
+export type OutputOutput = zod.output<typeof Output>;
+
+export const OutputMessage = zod
+  .object({
+    request_id: zod
+      .string()
+      .optional()
+      .describe(
+        "The `Idempotency-Key` of the request that caused this event. Omitted when no request did, and on snapshots unless that request's work is still in progress.",
+      ),
+    time: Timestamp.optional().describe(
+      "When the host made this change. Present on live and replayed events; omitted on snapshots.",
+    ),
+    output: Output,
+  })
+  .describe("The data of the `output` event. The output as it now is.");
+
+export type OutputMessage = zod.input<typeof OutputMessage>;
+export type OutputMessageOutput = zod.output<typeof OutputMessage>;
+
+export const OutputEvent = zod
+  .object({
+    event: zod.enum(["output"]),
+    id: zod
+      .string()
+      .min(1)
+      .optional()
+      .describe("The resume cursor. Omitted on snapshot and reset events."),
+    data: OutputMessage,
+  })
+  .describe("The `output` event, carried by the notebook stream.");
+
+export type OutputEvent = zod.input<typeof OutputEvent>;
+export type OutputEventOutput = zod.output<typeof OutputEvent>;
 
 export const consoleSeqMin = 0;
 
@@ -1462,6 +1584,21 @@ export type ExecutionRemovedEventOutput = zod.output<
   typeof ExecutionRemovedEvent
 >;
 
+export const OutputRemovedEvent = zod
+  .object({
+    event: zod.enum(["output.removed"]),
+    id: zod
+      .string()
+      .min(1)
+      .optional()
+      .describe("The resume cursor. Omitted on snapshot and reset events."),
+    data: RemovedMessage,
+  })
+  .describe("The `output.removed` event, carried by the notebook stream.");
+
+export type OutputRemovedEvent = zod.input<typeof OutputRemovedEvent>;
+export type OutputRemovedEventOutput = zod.output<typeof OutputRemovedEvent>;
+
 export const ConsoleRemovedEvent = zod
   .object({
     event: zod.enum(["console.removed"]),
@@ -1549,6 +1686,7 @@ export const Event = zod
     AttachmentEvent,
     RunEvent,
     ExecutionEvent,
+    OutputEvent,
     ConsoleEvent,
     DisplayEvent,
     InputEvent,
@@ -1562,6 +1700,7 @@ export const Event = zod
     AttachmentRemovedEvent,
     RunRemovedEvent,
     ExecutionRemovedEvent,
+    OutputRemovedEvent,
     ConsoleRemovedEvent,
     DisplayRemovedEvent,
     VariableRemovedEvent,
@@ -1586,6 +1725,7 @@ export const ObjectType = zod
     "attachment",
     "run",
     "execution",
+    "output",
     "console",
     "display",
     "input",
@@ -1594,7 +1734,7 @@ export const ObjectType = zod
     "custom",
   ])
   .describe(
-    "The kinds a stream carries, and the values `types` accepts. The catalog stream carries host, project, notebook, runtime, and attachment. A notebook's stream carries notebook, document, cell, runtime, attachment, run, execution, console, display, input, variable, analysis, and custom. Custom events describe occurrences rather than object state.",
+    "The kinds a stream carries, and the values `types` accepts. The catalog stream carries host, project, notebook, runtime, and attachment. A notebook's stream carries notebook, document, cell, runtime, attachment, run, execution, output, console, display, input, variable, analysis, and custom. Custom events describe occurrences rather than object state.",
   );
 
 export type ObjectType = zod.input<typeof ObjectType>;

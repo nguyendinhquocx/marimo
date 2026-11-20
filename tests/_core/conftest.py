@@ -305,14 +305,7 @@ def plan(
 
 
 def finish(notebook: Notebook, execution: protocol.ExecutionId) -> None:
-    notebook.observe(
-        be.Completed(
-            execution,
-            protocol.ValueOutcome(
-                protocol.DisplayData(mimetype="text/plain", data="value")
-            ),
-        )
-    )
+    notebook.observe(be.Completed(execution, protocol.SucceededOutcome()))
 
 
 def fold(events: list[RoutedEvent], initial: dict | None = None) -> dict:
@@ -326,6 +319,7 @@ def fold(events: list[RoutedEvent], initial: dict | None = None) -> dict:
             (
                 protocol.RunEvent,
                 protocol.ExecutionEvent,
+                protocol.OutputEvent,
                 protocol.ConsoleEvent,
                 protocol.DisplayEvent,
             ),
@@ -337,6 +331,7 @@ def fold(events: list[RoutedEvent], initial: dict | None = None) -> dict:
             (
                 protocol.RunRemovedEvent,
                 protocol.ExecutionRemovedEvent,
+                protocol.OutputRemovedEvent,
                 protocol.ConsoleRemovedEvent,
                 protocol.DisplayRemovedEvent,
             ),
@@ -360,15 +355,13 @@ def retained_execution(
             runtime_id=None,
             caused_by=None,
             cell_id=None if cell_id is None else protocol.CellId(cell_id),
-            code="42" if cell_id is None else None,
             code_fingerprint=code_fingerprint("42"),
-            depends_on={},
-            status="completed",
-            outcome=protocol.ValueOutcome(
-                protocol.DisplayData(mimetype="text/plain", data="42")
+            state=protocol.ExecutionCompleted(
+                started_at=None,
+                completed_at=None,
+                outcome=protocol.SucceededOutcome(),
+                depends_on={},
             ),
-            started_at=None,
-            completed_at=None,
         ),
         (
             protocol.Console(

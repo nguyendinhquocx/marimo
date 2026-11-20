@@ -21,18 +21,25 @@ vi.mock("@/components/ui/use-toast", () => ({
 
 function run(
   id: string,
-  status: Protocol.Lifecycle = "running",
+  status: Protocol.RunState["status"] = "running",
   runtimeId = "r1",
 ): Protocol.Run {
   return {
     id,
     notebook_id: "n1",
     runtime_id: runtimeId,
-    cells: [],
-    status,
-    outcome: status === "completed" ? "succeeded" : null,
-    started_at: status === "queued" ? null : MockExecutions.T0,
-    completed_at: status === "completed" ? MockExecutions.T1 : null,
+    origin: { kind: "code", code: "pass" },
+    state:
+      status === "completed"
+        ? {
+            status,
+            started_at: MockExecutions.T0,
+            completed_at: MockExecutions.T1,
+            outcome: "succeeded",
+          }
+        : status === "running"
+          ? { status, started_at: MockExecutions.T0 }
+          : { status },
   };
 }
 

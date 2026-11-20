@@ -14,16 +14,6 @@ import {
   Timestamp,
 } from "./Ids.ts";
 
-export const Lifecycle = Schema.Literals([
-  "queued",
-  "running",
-  "completed",
-]).annotate({
-  description:
-    "Where a run or execution is in its lifecycle. An execution is\n`queued` until it starts, `running` while code executes, and\n`completed` once it has ended. A run is `queued` until its first\nexecution starts, `running` until its cycle has settled or been cut\nshort, and `completed` once no more work can join it. How either\nended is its `outcome`.\n",
-  identifier: "Lifecycle",
-});
-
 export const RunOutcome = Schema.Literals([
   "succeeded",
   "failed",
@@ -34,30 +24,79 @@ export const RunOutcome = Schema.Literals([
   identifier: "RunOutcome",
 });
 
+export const RunCellsOrigin = Schema.Struct({
+  kind: Schema.Literal("cells"),
+  cell_ids: Schema.Array(CellId).check(Schema.isMinLength(1)).annotateKey({
+    description:
+      "The cells the run was requested for. Fixed when the run is accepted, so a client can tell which cells a queued run will reach before the runtime has planned their executions. Each one's execution in this run reports the fingerprint of the source accepted for it.",
+  }),
+}).annotate({ identifier: "RunCellsOrigin" });
+
+export const RunCodeOrigin = Schema.Struct({
+  kind: Schema.Literal("code"),
+  code: Schema.String.annotateKey({
+    description:
+      "The submitted code, which the run's scratch execution evaluates.",
+  }),
+}).annotate({ identifier: "RunCodeOrigin" });
+
+export const RunRuntimeOrigin = Schema.Struct({
+  kind: Schema.Literal("runtime"),
+}).annotate({ identifier: "RunRuntimeOrigin" });
+
+export const RunOrigin = Schema.Union([
+  RunCellsOrigin,
+  RunCodeOrigin,
+  RunRuntimeOrigin,
+]).annotate({
+  description:
+    "What a run was given when it was created, tagged on `kind`. A\n`cells` run was given the cells in `cell_ids`. A `code` run was\ngiven the code in `code`, which its scratch execution evaluates. A\n`runtime` run was given neither. The runtime scheduled it in\nresponse to a change, such as the cells that read a UI element\nafter its value changes. Other kinds are defined by later versions\nof this protocol.\n",
+  identifier: "RunOrigin",
+});
+
+export const RunQueued = Schema.Struct({
+  status: Schema.Literal("queued"),
+}).annotate({ identifier: "RunQueued" });
+
+export const RunRunning = Schema.Struct({
+  status: Schema.Literal("running"),
+  started_at: Timestamp.annotateKey({
+    description: "When the first execution started.",
+  }),
+}).annotate({ identifier: "RunRunning" });
+
+export const RunCompleted = Schema.Struct({
+  status: Schema.Literal("completed"),
+  started_at: Schema.NullOr(Timestamp).annotateKey({
+    description: "When the first execution started. Null if none started.",
+  }),
+  completed_at: Timestamp.annotateKey({
+    description: "When the run ended.",
+  }),
+  outcome: RunOutcome.annotateKey({
+    description:
+      "An execution failure does not complete a run while other work remains. Interruption must have taken effect, not merely been requested.",
+  }),
+}).annotate({ identifier: "RunCompleted" });
+
+export const RunState = Schema.Union([
+  RunQueued,
+  RunRunning,
+  RunCompleted,
+]).annotate({
+  description:
+    "Where a run is in its lifecycle, tagged on `status`. A run is\n`queued` until its first execution starts and `running` until the\ncycle has settled or been terminated. It is `completed` once all\nmember executions are terminal and no more can be scheduled in this\nrun, and that state is final. A run can complete with no executions.\n",
+  identifier: "RunState",
+});
+
 export const Run = Schema.Struct({
   id: RunId,
   notebook_id: NotebookId,
   runtime_id: RuntimeId.annotateKey({
     description: "The runtime that produced this run.",
   }),
-  cells: Schema.Array(CellId).annotateKey({
-    description:
-      "The cells the run was requested for. Fixed when the run is accepted, so a client can tell which cells a queued run will reach before the runtime has planned their executions. Each one's execution in this run reports the fingerprint of the source accepted for it. Empty for scratch code and for a run the runtime scheduled itself.",
-  }),
-  status: Lifecycle.annotateKey({
-    description:
-      "Queued until the first execution starts, running until the cycle has settled or been terminated, and completed once all member executions are terminal and no more can be scheduled in this run. A run can complete with no executions.",
-  }),
-  outcome: Schema.NullOr(RunOutcome).annotateKey({
-    description:
-      "Null until completed, then final. Published with the terminal status and completed_at. An execution failure does not complete a run while other work remains. Interruption must have taken effect, not merely been requested.",
-  }),
-  started_at: Schema.NullOr(Timestamp).annotateKey({
-    description: "When the first execution started. Null if none has started.",
-  }),
-  completed_at: Schema.NullOr(Timestamp).annotateKey({
-    description: "When the run ended. Null until the run is `completed`.",
-  }),
+  origin: RunOrigin,
+  state: RunState,
 }).annotate({
   description:
     "One bounded cycle of notebook work initiated by an action. It\nincludes synchronous callbacks and reactive work owned and awaited\nby the runtime's scheduler. Context inherited by an independent task\nrecords provenance, not ownership of the cycle. The host completes it\nonly after all member executions have ended and scheduling for the\ncycle has finished. Completion fixes its status and execution membership.\nIndependently triggered later work starts another run, even when\nits cause belongs to an earlier run. Every consumer attached to\nthe notebook sees it.\n\nRetention is up to the host and independent of replay history.\nHosts SHOULD retain ephemeral results briefly after completion to\nallow reconnection. Runs, executions, and items each have removal\nevents; a cell result may outlive its run.\n",
@@ -170,13 +209,9 @@ export const Error = Schema.Struct({
   identifier: "Error",
 });
 
-export const ValueOutcome = Schema.Struct({
-  kind: Schema.Literal("value"),
-  display: Schema.NullOr(DisplayData).annotateKey({
-    description:
-      "The value as last rendered. Replaced as it grows. Null when the code produced no value.",
-  }),
-}).annotate({ identifier: "ValueOutcome" });
+export const SucceededOutcome = Schema.Struct({
+  kind: Schema.Literal("succeeded"),
+}).annotate({ identifier: "SucceededOutcome" });
 
 export const ErrorOutcome = Schema.Struct({
   kind: Schema.Literal("error"),
@@ -202,14 +237,54 @@ export const SkippedOutcome = Schema.Struct({
 }).annotate({ identifier: "SkippedOutcome" });
 
 export const Outcome = Schema.Union([
-  ValueOutcome,
+  SucceededOutcome,
   ErrorOutcome,
   InterruptedOutcome,
   SkippedOutcome,
 ]).annotate({
   description:
-    "How an execution ended, tagged on `kind`. A `value` carries the\nexecution's value as last rendered; while the execution is\nrunning it is the value so far, and it is final once the\nexecution is `completed`. An `error` carries the error that ended it.\nAn `interrupted` execution was cancelled before or during execution.\nA `skipped` execution did not evaluate because of another cell; it\nhas no value and binds no variables. Other kinds are defined by\nlater versions of this protocol.\n",
+    "How an execution ended, tagged on `kind`. A `succeeded` execution\nevaluated its code without raising, and what it showed is its\n`output` item. An `error` carries the error that ended it.\nAn `interrupted` execution was cancelled before or during execution.\nA `skipped` execution did not evaluate because of another cell; it\nhas no value and binds no variables. Other kinds are defined by\nlater versions of this protocol.\n",
   identifier: "Outcome",
+});
+
+export const ExecutionQueued = Schema.Struct({
+  status: Schema.Literal("queued"),
+}).annotate({ identifier: "ExecutionQueued" });
+
+export const ExecutionRunning = Schema.Struct({
+  status: Schema.Literal("running"),
+  started_at: Timestamp.annotateKey({
+    description: "When the code started executing.",
+  }),
+}).annotate({ identifier: "ExecutionRunning" });
+
+export const ExecutionCompleted = Schema.Struct({
+  status: Schema.Literal("completed"),
+  started_at: Schema.NullOr(Timestamp).annotateKey({
+    description:
+      "When the code started executing. Null if the execution never started or the start time of a restored result is unknown.",
+  }),
+  completed_at: Schema.NullOr(Timestamp).annotateKey({
+    description:
+      "When the execution ended. Null for a restored result whose store does not record it.",
+  }),
+  outcome: Outcome,
+  depends_on: Schema.Record(Schema.String, Schema.NullOr(Revision)).annotateKey(
+    {
+      description:
+        "The variable revisions this result is valid against, keyed by name. Null for a name no retained cell execution had bound. Stamped as the execution ends.",
+    },
+  ),
+}).annotate({ identifier: "ExecutionCompleted" });
+
+export const ExecutionState = Schema.Union([
+  ExecutionQueued,
+  ExecutionRunning,
+  ExecutionCompleted,
+]).annotate({
+  description:
+    "Where an execution is in its lifecycle, tagged on `status`. An\nexecution is `queued` until it starts, `running` while code\nexecutes, and `completed` once it has ended with its `outcome`.\n",
+  identifier: "ExecutionState",
 });
 
 export const Execution = Schema.Struct({
@@ -228,36 +303,15 @@ export const Execution = Schema.Struct({
   }),
   cell_id: Schema.NullOr(CellId).annotateKey({
     description:
-      "The cell this execution belongs to. Null for scratch code, a cell outside the document.",
-  }),
-  code: Schema.NullOr(Schema.String).annotateKey({
-    description:
-      "The submitted code for an execution with no cell. Null for a cell's execution; its source is available through the cell when the host exposes it.",
+      "The cell this execution belongs to. Null for a scratch execution, which evaluates the code in its run's `origin`.",
   }),
   code_fingerprint: CodeFingerprint.annotateKey({
     description:
       "Fingerprint of the code the execution evaluates. Fixed when the execution is published, while it is still queued.",
   }),
-  depends_on: Schema.Record(Schema.String, Schema.NullOr(Revision)).annotateKey(
-    {
-      description:
-        "The variable revisions this result is valid against, keyed by name. Null for a name no retained cell execution had bound. Empty while queued, stamped as the execution ends, and final from then on.",
-    },
-  ),
-  status: Lifecycle,
-  outcome: Schema.NullOr(Outcome).annotateKey({
-    description:
-      "How the execution ended. Null while queued; while running, a value carries the display so far; final once completed.",
-  }),
-  started_at: Schema.NullOr(Timestamp).annotateKey({
-    description:
-      "When the code started executing. Null while queued or if the execution completed before starting.",
-  }),
-  completed_at: Schema.NullOr(Timestamp).annotateKey({
-    description: "When the execution ended. Null until it is completed.",
-  }),
+  state: ExecutionState,
 }).annotate({
   description:
-    "One cell evaluated within a run, or scratch code evaluated once.\nIt moves through `queued`, `running`, and `completed`, and ends with\none outcome. Side effects belong to the execution whose context\nproduced them, and items can arrive after completion while the\nexecution remains retained. Each new input belongs to a running\nexecution. Input calls from completed or removed executions raise\n`EOFError` in the calling code. Exactly one of `cell_id` and `code`\nis null: a cell's execution carries the cell and no code, and a\nscratch execution carries its code and no cell.\n",
+    "One cell evaluated within a run, or scratch code evaluated once.\nIt moves through `queued`, `running`, and `completed`, and ends with\none outcome. Side effects belong to the execution whose context\nproduced them, and items can arrive after completion while the\nexecution remains retained. Each new input belongs to a running\nexecution. Input calls from completed or removed executions raise\n`EOFError` in the calling code. A scratch execution has no cell and\nevaluates the code in its run's `origin`.\n",
   identifier: "Execution",
 });

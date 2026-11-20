@@ -115,17 +115,20 @@ def test_a_stored_output_is_a_completed_execution_of_no_run() -> None:
         runtime_id=None,
         caused_by=None,
         cell_id=protocol.CellId("a"),
-        code=None,
         code_fingerprint=protocol.CodeFingerprint(
             document[0].code_fingerprint
         ),
-        depends_on={},
-        status="completed",
-        outcome=protocol.ValueOutcome(
-            protocol.DisplayData(mimetype="text/plain", data="42")
+        state=protocol.ExecutionCompleted(
+            started_at=None,
+            completed_at=None,
+            outcome=protocol.SucceededOutcome(),
+            depends_on={},
         ),
-        started_at=None,
-        completed_at=None,
+    )
+    assert restored.output == protocol.Output(
+        id=protocol.ItemId(f"{execution.id}:output"),
+        execution_id=execution.id,
+        media=protocol.DisplayData(mimetype="text/plain", data="42"),
     )
     # Text and media keep the order they were written in.
     assert restored.outputs == (
@@ -168,7 +171,7 @@ def test_a_stored_error_keeps_its_type_message_and_traceback() -> None:
 
     restored = executions.current(protocol.CellId("a"))
     assert restored is not None
-    assert restored.execution.outcome == protocol.ErrorOutcome(
+    assert restored.execution.state.outcome == protocol.ErrorOutcome(
         protocol.Error(
             kind="exception",
             name="ZeroDivisionError",
@@ -254,7 +257,7 @@ def outcome_of(outputs: list[OutputType]) -> protocol.Outcome | None:
     )
     restored = executions.current(protocol.CellId("a"))
     assert restored is not None
-    return restored.execution.outcome
+    return restored.execution.state.outcome
 
 
 def test_a_stored_kernel_error_is_the_outcome_a_live_run_reports() -> None:
@@ -285,7 +288,7 @@ def test_a_stored_kernel_error_is_the_outcome_a_live_run_reports() -> None:
 
 
 def test_stored_values_and_text_keep_their_formats() -> None:
-    bundle = {"text/html": "<b>1</b>", "text/plain": "1"}
+    bundle = {"text/plain": "NaN", "application/json": [float("nan")]}
     highlighted = '<span class="codehilite">Traceback</span>'
     executions = executions_from_session(
         session(
@@ -313,6 +316,12 @@ def test_stored_values_and_text_keep_their_formats() -> None:
                         "text": highlighted,
                         "mimetype": "application/vnd.marimo+traceback",
                     },
+                    {
+                        "type": "stream",
+                        "name": "stdout",
+                        "text": highlighted,
+                        "mimetype": "text/plain",
+                    },
                 ],
             ),
         ),
@@ -321,17 +330,17 @@ def test_stored_values_and_text_keep_their_formats() -> None:
 
     value = executions.current(protocol.CellId("a"))
     assert value is not None
-    assert value.execution.outcome == protocol.ValueOutcome(
-        protocol.DisplayData(
-            mimetype="application/vnd.marimo+mimebundle",
-            data=json.dumps(bundle),
-        )
+    assert value.output is not None
+    assert value.output.media == protocol.DisplayData(
+        mimetype="application/vnd.marimo+mimebundle",
+        data='{"text/plain":"NaN","application/json":[null]}',
     )
     raised = executions.current(protocol.CellId("b"))
     assert raised is not None
-    assert isinstance(raised.execution.outcome, protocol.ErrorOutcome)
-    assert raised.execution.outcome.error.traceback == protocol.DisplayData(
-        mimetype="text/html", data=highlighted
+    assert isinstance(raised.execution.state.outcome, protocol.ErrorOutcome)
+    assert (
+        raised.execution.state.outcome.error.traceback
+        == protocol.DisplayData(mimetype="text/html", data=highlighted)
     )
     # An old password entry is dropped, and the rendered traceback is a
     # display, not console text.
@@ -343,6 +352,13 @@ def test_stored_values_and_text_keep_their_formats() -> None:
             raised.execution.id,
             raised.outputs[0].id,
             0,
+        ),
+        protocol.Console(
+            id=raised.outputs[1].id,
+            execution_id=raised.execution.id,
+            seq=1,
+            name="stdout",
+            text=highlighted,
         ),
     )
 
@@ -372,10 +388,9 @@ def test_stored_cells_follow_the_documents_order() -> None:
         result = executions.current(protocol.CellId(cell_id))
         if result is None:
             return None
-        outcome = result.execution.outcome
-        assert isinstance(outcome, protocol.ValueOutcome)
-        assert outcome.display is not None
-        return outcome.display.data
+        assert result.output is not None
+        assert result.output.media is not None
+        return result.output.media.data
 
     assert [display(cell_id) for cell_id in "abcde"] == [
         "first",

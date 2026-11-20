@@ -458,8 +458,12 @@ class SessionBridge(SessionEventListener):
         if session is None:
             return []
         return [
-            notification_event(notebook_id, notification)
-            for notification in session.session_view.snapshot_notifications()
+            event
+            for notification in session.session_view.snapshot_notifications(
+                scope="host"
+            )
+            if (event := notification_event(notebook_id, notification))
+            is not None
         ]
 
     def session_for_notebook(

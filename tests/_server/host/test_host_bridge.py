@@ -23,8 +23,10 @@ from marimo._core.code import code_fingerprint
 from marimo._core.errors import Conflict, DecisionRequired, PreconditionFailed
 from marimo._core.stream import RoutedEvent
 from marimo._messaging.notification import (
+    CellNotification,
     CompletedRunNotification,
     ExecutionNotification,
+    PdbInputNotification,
     StartupProgressNotification,
     VariablesNotification,
 )
@@ -736,16 +738,21 @@ async def test_stored_results_are_on_the_stream_without_a_runtime(
     (cell,) = notebook.document
     result = notebook.executions.current(cell.id)
     assert result is not None
-    assert result.execution.outcome == protocol.ValueOutcome(
-        protocol.DisplayData(mimetype="text/plain", data="1")
+    assert result.output is not None
+    assert result.output.media == protocol.DisplayData(
+        mimetype="text/plain", data="1"
     )
-    assert names(bridge.host.events(notebook_id=record.id)) == [
-        "notebook",
-        "cell",
-        "document",
-        "execution",
-        "ready",
-    ]
+    events = bridge.host.events(notebook_id=record.id)
+    assert [
+        event.event.data.execution
+        for event in events
+        if isinstance(event.event, protocol.ExecutionEvent)
+    ] == [result.execution]
+    assert [
+        event.event.data.output
+        for event in events
+        if isinstance(event.event, protocol.OutputEvent)
+    ] == [result.output]
     bridge.close()
 
 
@@ -1298,15 +1305,30 @@ async def test_session_notifications_join_the_notebook_stream_once(
         code="x = 1",
         code_fingerprint=code_fingerprint("x = 1"),
     )
+    cell = CellNotification(cell_id="cell-1", status="queued")
+    prompt = PdbInputNotification(cell_id="cell-1", input_id="p1")
     session.broadcast(variables)
     session.broadcast(planned)
+    session.broadcast(cell)
+    session.broadcast(prompt)
+    session.session_view.snapshot_notifications.return_value = [
+        cell,
+        prompt,
+        variables,
+    ]
+    assert [e.event.data for e in bridge.session_snapshot(a.id)] == [
+        MarimoMessage(variables)
+    ]
+
+    session.session_view.snapshot_notifications.assert_called_once_with(
+        scope="host"
+    )
 
     assert first == second
     assert catalog == other == []
     assert filtered == [e for e in first if isinstance(e.event, MarimoEvent)]
     assert [(e.run_id, e.event.data) for e in filtered] == [
         (None, MarimoMessage(variables)),
-        (protocol.RunId("run-1"), MarimoMessage(planned)),
     ]
     bridge.close()
 
