@@ -17,9 +17,10 @@ const queued = {
   id: "e1",
   run_id: "r1",
   runtime_id: "runtime",
-  caused_by: null,
+  caused_by_id: null,
   cell_id: "cell",
   code_fingerprint: "fp",
+  created_at: "2026-10-01T09:20:00Z",
   state: { status: "queued" },
 } satisfies Execution;
 
@@ -42,7 +43,7 @@ describe("execution traces", () => {
       started_at,
       completed_at: "1970-01-01T00:01:42Z",
       status: "completed",
-      outcome: { kind: "interrupted" },
+      outcome: { kind: "cancelled" },
     } satisfies Execution["state"];
     const runId = "r1" as RunId;
     const running = observe(observe(initialState()), {

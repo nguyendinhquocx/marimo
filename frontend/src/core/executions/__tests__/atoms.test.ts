@@ -36,13 +36,14 @@ function run(
     notebook_id: "n1",
     runtime_id: "r1",
     origin: { kind: "cells", cell_ids: cells },
+    created_at: "2026-10-01T09:20:00Z",
     state:
       status === "completed"
         ? {
             status,
             started_at: null,
             completed_at: "2026-10-01T09:20:02Z",
-            outcome: "succeeded",
+            outcome: { kind: "succeeded" },
           }
         : status === "running"
           ? { status, started_at: "2026-10-01T09:20:01Z" }

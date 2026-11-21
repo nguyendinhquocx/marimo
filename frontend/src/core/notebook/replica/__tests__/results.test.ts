@@ -37,9 +37,10 @@ const restored = {
   id: "e-restored",
   run_id: null,
   runtime_id: null,
-  caused_by: null,
+  caused_by_id: null,
   cell_id: "c3",
   code_fingerprint: "0f71456db2ea83f4",
+  created_at: null,
   state: {
     status: "completed",
     started_at: "2026-09-30T09:20:01Z",
@@ -80,7 +81,7 @@ describe("retained results", () => {
     expect(done.get("c3")?.record.id).toBe("e12");
     expect(done.get("c3")?.record.state.status).toBe("completed");
     expect(done.get("k7f2")?.record.state).toHaveProperty("depends_on", {
-      x: { execution: "e12", update: 0 },
+      x: { execution_id: "e12", update: 0 },
     });
     expect(done.get("c1")).toBeNull();
   });
@@ -168,7 +169,7 @@ describe("retained results", () => {
         status: "completed",
         started_at: null,
         completed_at: time,
-        outcome: { kind: "interrupted" },
+        outcome: { kind: "cancelled" },
         depends_on: {},
       },
     };
@@ -196,7 +197,7 @@ describe("retained results", () => {
     expect(resource(cancelled).get("c3")?.record.state).toHaveProperty(
       "outcome",
       {
-        kind: "interrupted",
+        kind: "cancelled",
       },
     );
   });

@@ -33,7 +33,8 @@ const T1 = "2026-10-01T09:20:12.500Z";
 
 let sequence = 0;
 
-const SUCCEEDED: Protocol.Outcome = { kind: "succeeded" };
+const READY: Protocol.RuntimeState = { status: "ready" };
+const SUCCEEDED: Protocol.ExecutionOutcome = { kind: "succeeded" };
 
 /** An execution, or the output it set, as the stream delivers them. */
 type ExecutionFixture = Protocol.Execution & { items?: readonly Item[] };
@@ -62,16 +63,17 @@ function execution(
     id: `e${sequence}`,
     run_id: "run-1",
     runtime_id: "r1",
-    caused_by: null,
+    caused_by_id: null,
     cell_id: cellId,
     code_fingerprint: "0f71456db2ea83f4",
+    created_at: T0,
     state,
   };
 }
 
 function completed(
   cellId: string | null,
-  outcome: Protocol.Outcome = SUCCEEDED,
+  outcome: Protocol.ExecutionOutcome = SUCCEEDED,
 ): Protocol.Execution {
   return execution(cellId, {
     status: "completed",
@@ -84,7 +86,7 @@ function completed(
 
 function output(
   execution: Protocol.Execution,
-  media: Protocol.DisplayData | null,
+  media: Protocol.Media | null,
 ): Protocol.Output {
   return { id: `${execution.id}:output`, execution_id: execution.id, media };
 }
@@ -167,7 +169,7 @@ export const MockExecutions = {
   /** A completed execution and the output it showed. */
   shown(
     cellId: string | null,
-    display: Protocol.DisplayData,
+    display: Protocol.Media,
     fields: Partial<Omit<Protocol.Execution, "id" | "state">> = {},
   ): readonly [Protocol.Execution, Protocol.Output] {
     const execution = { ...completed(cellId), ...fields };
@@ -180,7 +182,7 @@ export const MockExecutions = {
     error: Partial<Protocol.Error> = {},
   ): Protocol.Execution {
     return completed(cellId, {
-      kind: "error",
+      kind: "failed",
       error: {
         kind: "exception",
         message: "boom",
@@ -200,7 +202,7 @@ export const MockExecutions = {
   },
 
   interrupted(cellId: string | null): Protocol.Execution {
-    return completed(cellId, { kind: "interrupted" });
+    return completed(cellId, { kind: "cancelled" });
   },
 
   skipped(cellId: string): Protocol.Execution {
@@ -227,18 +229,17 @@ export const MockExecutions = {
       path: null,
       name: "Notebook",
       operations: [],
-      updated_at: null,
+      modified_at: null,
     };
   },
 
-  runtime(status: Protocol.RuntimeStatus): Protocol.Runtime {
+  runtime(state: Protocol.RuntimeState = READY): Protocol.Runtime {
     return {
       id: "r1",
       notebook_id: "n1",
-      status,
-      message: null,
       marimo_version: null,
-      started_at: T0,
+      created_at: T0,
+      state,
     };
   },
 

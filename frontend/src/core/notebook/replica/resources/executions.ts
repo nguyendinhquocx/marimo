@@ -10,10 +10,9 @@ import {
 } from "./results";
 import { shown, startedAt } from "../execution-state";
 
-/** A console line, display, or input an execution produced, tagged by kind. */
+/** A console entry or input an execution produced, tagged by kind. */
 type ProducedItem =
   | (Protocol.Console & { readonly kind: "console" })
-  | (Protocol.Display & { readonly kind: "display" })
   | (Protocol.Input & { readonly kind: "input" });
 
 /** Time the host published the item, when included in a live event. */
@@ -46,6 +45,28 @@ export interface Executions {
   readonly scratch: Result | null;
   /** The latest scratch execution to start, including one that printed nothing. */
   readonly scratchConsole?: Execution;
+  /** The latest scratch run, if the host could not finish it and says why. */
+  readonly scratchFailure?: RunFailure;
+}
+
+/** A run the host could not finish, with its reason. */
+export interface RunFailure {
+  readonly runId: Protocol.RunId;
+  readonly message: string;
+  readonly completedAt: string;
+}
+
+function hostFailure(run: Protocol.Run): RunFailure | undefined {
+  const { state } = run;
+  return state.status === "completed" &&
+    state.outcome.kind === "failed" &&
+    state.outcome.message !== null
+    ? {
+        runId: run.id,
+        message: state.outcome.message,
+        completedAt: state.completed_at,
+      }
+    : undefined;
 }
 
 type Kind =
@@ -54,7 +75,6 @@ type Kind =
   | "execution"
   | "output"
   | "console"
-  | "display"
   | "input"
   | "variable";
 
@@ -277,6 +297,11 @@ export const executions: NotebookResource<Executions, Kind> = {
     run: (state, { data }) => ({
       ...state,
       runs: new Map(state.runs).set(data.run.id, data.run),
+      // A newer scratch run replaces what the last one reported.
+      scratchFailure:
+        data.run.origin.kind === "code"
+          ? hostFailure(data.run)
+          : state.scratchFailure,
     }),
     "run.removed": (state, { data }) =>
       state.runs.has(data.id)
@@ -315,9 +340,6 @@ export const executions: NotebookResource<Executions, Kind> = {
     console: (state, { data }) =>
       attach(state, { ...data.console, kind: "console", time: data.time }),
     "console.removed": (state, { data }) => detach(state, data.id),
-    display: (state, { data }) =>
-      attach(state, { ...data.display, kind: "display", time: data.time }),
-    "display.removed": (state, { data }) => detach(state, data.id),
     input: (state, { data }) =>
       attach(state, { ...data.input, kind: "input", time: data.time }),
     variable: (state, { data }) => bind(state, data.variable),

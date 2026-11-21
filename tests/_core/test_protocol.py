@@ -331,7 +331,9 @@ def test_catalog_capabilities_and_runtime_stop() -> None:
             if kind in {"runtime", "attachment"}:
                 assert obj["notebook_id"] in state["notebook"]
             state.setdefault(kind, {})[identity(obj)] = obj
-        assert not state.get("runtime")
+        assert [r["state"]["status"] for r in state["runtime"].values()] == [
+            "ended"
+        ]
         assert set(state["attachment"]) == {"a1", "a2"}
         catalogs.append(
             {kind: objects for kind, objects in state.items() if objects}
@@ -405,7 +407,7 @@ def assert_document_hash(
         ("run.sse", "succeeded"),
         ("run-cells.sse", "succeeded"),
         ("run-failed.sse", "failed"),
-        ("run-interrupted.sse", "interrupted"),
+        ("run-cancelled.sse", "cancelled"),
         ("run-stopped.sse", "succeeded"),
         ("notebook-events.sse", "succeeded"),
     ],
@@ -437,7 +439,7 @@ def test_run_lifecycles(name: str, outcome: str) -> None:
                 assert all(
                     e["state"]["status"] == "completed" for e in members
                 )
-                assert run["state"]["outcome"] == outcome
+                assert run["state"]["outcome"]["kind"] == outcome
             else:
                 assert "outcome" not in run["state"]
                 assert "completed_at" not in run["state"]
@@ -458,12 +460,13 @@ def test_run_lifecycles(name: str, outcome: str) -> None:
                     "runtime_id",
                     "cell_id",
                     "code_fingerprint",
-                    "caused_by",
+                    "caused_by_id",
                 ):
                     assert execution[field] == previous[field]
-            if execution["caused_by"] is not None:
+            if execution["caused_by_id"] is not None:
                 assert (
-                    executions[execution["caused_by"]]["run_id"] == run["id"]
+                    executions[execution["caused_by_id"]]["run_id"]
+                    == run["id"]
                 )
             if execution["cell_id"] is None:
                 assert run["origin"]["kind"] == "code"
@@ -478,7 +481,7 @@ def test_run_lifecycles(name: str, outcome: str) -> None:
                 for revision in state["depends_on"].values():
                     assert revision is None or revision["update"] >= 0
             executions[execution["id"]] = execution
-        elif kind in {"console", "display"}:
+        elif kind == "console":
             assert data[kind]["execution_id"] in executions
         elif kind == "variable":
             variable = data["variable"]
@@ -488,7 +491,7 @@ def test_run_lifecycles(name: str, outcome: str) -> None:
                 # Bound before the execution completes.
                 assert execution["state"]["status"] == "running"
                 assert (
-                    variable["revision"]["execution"]
+                    variable["revision"]["execution_id"]
                     == variable["execution_id"]
                 )
     assert runs
@@ -510,11 +513,11 @@ def test_cell_run_request_and_results() -> None:
     }
     assert cells["c3"]["code"] == "x = 21"
     assert cells["k7f2"]["code"] == "y = x * 2"
-    assert executions["e12"]["caused_by"] is None
-    assert executions["e13"]["caused_by"] is None
+    assert executions["e12"]["caused_by_id"] is None
+    assert executions["e13"]["caused_by_id"] is None
     assert executions["e12"]["state"]["depends_on"] == {}
     assert executions["e13"]["state"]["depends_on"] == {
-        "x": {"execution": "e12", "update": 0}
+        "x": {"execution_id": "e12", "update": 0}
     }
     for execution in executions.values():
         assert (
@@ -533,7 +536,7 @@ def test_cell_run_request_and_results() -> None:
             "id": "e12-x",
             "execution_id": "e12",
             "name": "x",
-            "revision": {"execution": "e12", "update": 0},
+            "revision": {"execution_id": "e12", "update": 0},
             "type": "int",
             "preview": "21",
         },
@@ -541,7 +544,7 @@ def test_cell_run_request_and_results() -> None:
             "id": "e13-y",
             "execution_id": "e13",
             "name": "y",
-            "revision": {"execution": "e13", "update": 0},
+            "revision": {"execution_id": "e13", "update": 0},
             "type": "int",
             "preview": "42",
         },
@@ -565,14 +568,17 @@ def test_edit_request_response_and_events() -> None:
     order = before["order"].copy()
     touched = {}
     for change in request["changes"]:
-        if change["kind"] == "put_cell":
+        if change["kind"] == "set_order":
+            assert change["base_etag"] == before["order_etag"]
+            assert sorted(order) == sorted(change["order"])
+            order = change["order"]
+        elif change["kind"] in ("create_cell", "replace_cell"):
             cell = change["cell"]
-            previous = cells.get(cell["id"])
-            assert change["base_etag"] == (
-                previous["etag"] if previous else None
-            )
-            if previous is None:
-                order.insert(order.index(change["after"]) + 1, cell["id"])
+            if change["kind"] == "create_cell":
+                assert cell["id"] not in cells
+                order.append(cell["id"])
+            else:
+                assert change["base_etag"] == cells[cell["id"]]["etag"]
             updated = changed[cell["id"]]
             assert all(updated[key] == value for key, value in cell.items())
             cells[cell["id"]] = updated
@@ -663,7 +669,7 @@ def test_identifier_constraints(name: str) -> None:
         msgspec.json.decode(b'""', type=identifier)
 
 
-@pytest.mark.parametrize("field", ["run_id", "runtime_id", "caused_by"])
+@pytest.mark.parametrize("field", ["run_id", "runtime_id", "caused_by_id"])
 def test_required_nullable_fields(field: str) -> None:
     wire = json.loads(
         (FIXTURES / "execution-restored.json").read_text(encoding="utf-8")

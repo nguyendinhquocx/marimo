@@ -3,7 +3,7 @@
 
 import {
   NotebookClient,
-  type NotebookEvent,
+  type NotebookStreamEvent,
   type NotebookTransport,
 } from "@marimo-team/client";
 import { getWorkerRPC } from "@/core/wasm/rpc";
@@ -175,7 +175,7 @@ export class IslandsPyodideBridge implements RunRequests, EditRequests {
           return;
         }
         const frame = jsonParseWithSpecialChar(event) as
-          | NotebookEvent
+          | NotebookStreamEvent
           | { event: "marimo"; data: { marimo?: NotificationMessage } };
         if (frame.event === "marimo") {
           if (frame.data.marimo) {
@@ -193,7 +193,10 @@ export class IslandsPyodideBridge implements RunRequests, EditRequests {
     );
   }
 
-  private logIslandConsole(cells: Map<string, CellId>, frame: NotebookEvent) {
+  private logIslandConsole(
+    cells: Map<string, CellId>,
+    frame: NotebookStreamEvent,
+  ) {
     switch (frame.event) {
       case "reset":
         cells.clear();
@@ -212,13 +215,17 @@ export class IslandsPyodideBridge implements RunRequests, EditRequests {
         const entry = frame.data.console;
         const cellId = cells.get(entry.execution_id);
         // Snapshot rows have no cursor. Only live writes belong in the logs.
-        if (frame.id !== undefined && cellId !== undefined) {
+        if (
+          frame.id !== undefined &&
+          cellId !== undefined &&
+          entry.content.kind === "text"
+        ) {
           const logs = getCellLogsForMessage({
             cell_id: cellId,
             console: {
-              channel: entry.name,
+              channel: entry.content.stream,
               mimetype: "text/plain",
-              data: entry.text,
+              data: entry.content.text,
               timestamp: frame.data.time
                 ? Date.parse(frame.data.time) / 1000
                 : Date.now() / 1000,

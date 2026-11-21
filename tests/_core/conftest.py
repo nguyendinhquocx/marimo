@@ -134,7 +134,7 @@ def record(
         path=path,
         name=path.removesuffix(".py"),
         operations=("runtime.start", "runtime.run"),
-        updated_at=None,
+        modified_at=None,
     )
 
 
@@ -293,11 +293,7 @@ def plan(
     notebook.observe(
         be.Planned(
             run.id,
-            (
-                be.PlannedExecution(
-                    execution, cell, "hash", "code" if cell is None else None
-                ),
-            ),
+            (be.PlannedExecution(execution, cell, "hash"),),
         )
     )
     notebook.observe(be.Started(execution))
@@ -321,7 +317,6 @@ def fold(events: list[RoutedEvent], initial: dict | None = None) -> dict:
                 protocol.ExecutionEvent,
                 protocol.OutputEvent,
                 protocol.ConsoleEvent,
-                protocol.DisplayEvent,
             ),
         ):
             body = protocol_events.body(event)
@@ -333,7 +328,6 @@ def fold(events: list[RoutedEvent], initial: dict | None = None) -> dict:
                 protocol.ExecutionRemovedEvent,
                 protocol.OutputRemovedEvent,
                 protocol.ConsoleRemovedEvent,
-                protocol.DisplayRemovedEvent,
             ),
         ):
             state.pop(
@@ -353,9 +347,10 @@ def retained_execution(
             id=execution_id,
             run_id=None if run_id is None else protocol.RunId(run_id),
             runtime_id=None,
-            caused_by=None,
+            caused_by_id=None,
             cell_id=None if cell_id is None else protocol.CellId(cell_id),
             code_fingerprint=code_fingerprint("42"),
+            created_at=None,
             state=protocol.ExecutionCompleted(
                 started_at=None,
                 completed_at=None,
@@ -365,11 +360,10 @@ def retained_execution(
         ),
         (
             protocol.Console(
-                execution_id,
-                protocol.ItemId("restored-output"),
-                "stdout",
-                0,
-                "hello",
+                id=protocol.ItemId("restored-output"),
+                execution_id=execution_id,
+                seq=0,
+                content=protocol.ConsoleText(stream="stdout", text="hello"),
             ),
         ),
     )

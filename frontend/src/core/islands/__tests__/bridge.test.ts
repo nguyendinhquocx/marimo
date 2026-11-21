@@ -418,7 +418,14 @@ describe("IslandsPyodideBridge", () => {
       };
       const write = (name: "stdout" | "stderr", text: string, seq = 0) => ({
         event: "console",
-        data: { console: { id: text, execution_id: "e1", seq, name, text } },
+        data: {
+          console: {
+            id: text,
+            execution_id: "e1",
+            seq,
+            content: { kind: "text", stream: name, text },
+          },
+        },
       });
       sendNotebookEvent(2, record);
       sendNotebookEvent(2, write("stdout", "snapshot"));
@@ -814,6 +821,7 @@ describe("IslandsPyodideBridge", () => {
           notebook_id: "n1",
           runtime_id: "r1",
           origin: { kind: "cells", cell_ids: ["c1"] },
+          created_at: "2026-10-01T09:20:00Z",
           state: { status: "queued" },
         },
       });

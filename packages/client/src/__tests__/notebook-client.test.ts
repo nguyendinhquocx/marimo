@@ -247,6 +247,7 @@ describe("NotebookClient", () => {
       notebook_id: "n1",
       runtime_id: "rt-1",
       origin: { kind: "code", code: "pass" },
+      created_at: "2026-10-01T09:20:00Z",
       state: { status: "running", started_at: "2026-10-01T09:20:01Z" },
     };
     const { notebook, sent } = connect(() => json(202, run));
@@ -338,6 +339,7 @@ describe("NotebookClient", () => {
           method === "run"
             ? { kind: "cells", cell_ids: ["c1"] }
             : { kind: "code", code },
+        created_at: "2026-10-01T09:20:00Z",
         state: { status: "queued" },
       };
       const { notebook, sent } = connect(() => json(202, run));
@@ -393,7 +395,7 @@ describe("NotebookClient", () => {
       "runtime.restart": "restart",
       "runtime.run": "run",
       "runtime.execute": "execute",
-      "runtime.input": "input",
+      "input.reply": "input",
       "runtime.interrupt": "interrupt",
       "runtime.cancel": "cancel",
     } as const).toExtend<Record<NotebookOperationId, keyof NotebookClient>>();

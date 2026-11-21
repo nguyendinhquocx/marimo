@@ -49,9 +49,9 @@ export const objects = [
     streams: ["notebook"],
     removable: false,
   },
-] as const satisfies ReadonlyArray<Objects.ObjectKind>;
+] as const satisfies ReadonlyArray<Objects.ObjectDefinition>;
 
 export const Api = Host.make(objects);
 
-export const { NotebookEvent } = derive(objects);
-export type NotebookEvent = typeof NotebookEvent.Type;
+export const { NotebookStreamEvent } = derive(objects);
+export type NotebookStreamEvent = typeof NotebookStreamEvent.Type;

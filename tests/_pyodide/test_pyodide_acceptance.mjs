@@ -131,7 +131,7 @@ async function testHostInputs(notebook, notebookId, frames) {
     );
     assert.equal(input.password, password);
     const reply = () => call(
-      "runtime.input", `answer-${input.id}`, { value }, { input_id: input.id },
+      "input.reply", `answer-${input.id}`, { value }, { input_id: input.id },
     );
     const answered = await reply();
     assert.deepEqual(answered, {
@@ -144,9 +144,9 @@ async function testHostInputs(notebook, notebookId, frames) {
   const assertSucceeded = async (runId) => {
     const completed = await waitForFrame(frames, (frame) =>
       frame.event === "run" && frame.data.run.id === runId &&
-      frame.data.run.status === "completed",
+      frame.data.run.state.status === "completed",
     );
-    assert.equal(completed.data.run.outcome, "succeeded");
+    assert.equal(completed.data.run.state.outcome.kind, "succeeded");
   };
 
   const run = await call("runtime.execute", "wasm-input-run", { code: [
@@ -181,7 +181,8 @@ async function testHostInputs(notebook, notebookId, frames) {
   const values = { first: "one", second: "two" };
   for (const prompt of Object.keys(values)) {
     await waitForFrame(frames, (frame) =>
-      frame.event === "console" && frame.data.console.text.includes(`${prompt} reader started`),
+      frame.event === "console" && frame.data.console.content.kind === "text" &&
+      frame.data.console.content.text.includes(`${prompt} reader started`),
     );
   }
   const isConcurrentInput = (frame) => frame.event === "input" &&
@@ -217,9 +218,9 @@ async function testIdleInterrupt(pyodide, notebook, notebookId, frames) {
     assert.equal(run.status, 202);
     const completed = await waitForFrame(frames, (frame) =>
       frame.event === "run" && frame.data.run.id === run.body.id &&
-      frame.data.run.status === "completed",
+      frame.data.run.state.status === "completed",
     );
-    assert.equal(completed.data.run.outcome, "succeeded");
+    assert.equal(completed.data.run.state.outcome.kind, "succeeded");
   } finally {
     pyodide.setInterruptBuffer(undefined);
   }
@@ -439,7 +440,7 @@ json.dumps(result)
         params: { notebook_id: cell.notebook_id },
         headers: { "idempotency-key": "wasm-acceptance-edit" },
         body: { changes: [{
-          kind: "put_cell", base_etag: cell.etag,
+          kind: "replace_cell", base_etag: cell.etag,
           cell: { id: cell.id, code: "x = 7", name: cell.name, config: cell.config },
         }] },
       });

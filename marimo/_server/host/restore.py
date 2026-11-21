@@ -123,9 +123,10 @@ def _result(cell: DocumentCell, stored: Cell) -> CellExecution | None:
             id=execution_id,
             run_id=None,
             runtime_id=None,
-            caused_by=None,
+            caused_by_id=None,
             cell_id=cell.id,
             code_fingerprint=protocol.CodeFingerprint(cell.code_fingerprint),
+            created_at=None,
             state=protocol.ExecutionCompleted(
                 started_at=None,
                 completed_at=None,
@@ -165,7 +166,9 @@ _KINDS = {
 }
 
 
-def _failure(cell: DocumentCell, stored: ErrorOutput) -> protocol.Outcome:
+def _failure(
+    cell: DocumentCell, stored: ErrorOutput
+) -> protocol.ExecutionOutcome:
     """A stored error as the outcome a live run reports for it.
 
     The file keeps an error's type and message and not the cells it
@@ -173,9 +176,9 @@ def _failure(cell: DocumentCell, stored: ErrorOutput) -> protocol.Outcome:
     """
     name, message = stored["ename"], stored["evalue"]
     if name == "interruption":
-        return protocol.InterruptedOutcome()
+        return protocol.CancelledOutcome()
     if name in _SKIPPED:
-        return protocol.SkippedOutcome(
+        return protocol.ExecutionSkippedOutcome(
             reason=_SKIPPED[name],
             message=message.rstrip(": "),
             related=(
@@ -185,7 +188,7 @@ def _failure(cell: DocumentCell, stored: ErrorOutput) -> protocol.Outcome:
             ),
         )
     traceback = restore_traceback(stored.get("traceback"))
-    return protocol.ErrorOutcome(
+    return protocol.ExecutionFailedOutcome(
         diagnostics.error(
             _KINDS.get(name, "exception"),
             message,
@@ -204,7 +207,7 @@ def _failure(cell: DocumentCell, stored: ErrorOutput) -> protocol.Outcome:
 
 def _outcome(
     cell: DocumentCell, outputs: Sequence[OutputType]
-) -> tuple[protocol.Outcome, protocol.DisplayData | None]:
+) -> tuple[protocol.ExecutionOutcome, protocol.Media | None]:
     """How the stored result ended, and the first output that shows something."""
     for output in outputs:
         if output["type"] == "error":
@@ -223,40 +226,32 @@ def _outcome(
 
 def _console(
     execution_id: protocol.ExecutionId, entries: Sequence[ConsoleType]
-) -> tuple[protocol.Console | protocol.Display, ...]:
+) -> tuple[protocol.Console, ...]:
     """The stored console text and media, in the order they were written."""
-    items: list[protocol.Console | protocol.Display] = []
+    items: list[protocol.Console] = []
     for entry in entries:
-        item_id = protocol.ItemId(f"{execution_id}-{len(items)}")
+        content: protocol.ConsoleContent
         if entry["type"] == "streamMedia":
-            items.append(
-                protocol.Display(
-                    id=item_id,
-                    execution_id=execution_id,
-                    seq=len(items),
-                    content=displayed(entry["mimetype"], entry["data"]),
-                )
+            content = protocol.ConsoleMedia(
+                displayed(entry["mimetype"], entry["data"])
             )
         elif rendered_traceback(entry.get("mimetype"), entry["text"]):
-            items.append(
-                protocol.Display(
-                    id=item_id,
-                    execution_id=execution_id,
-                    seq=len(items),
-                    content=displayed(
-                        "application/vnd.marimo+traceback", entry["text"]
-                    ),
-                )
+            content = protocol.ConsoleMedia(
+                displayed("application/vnd.marimo+traceback", entry["text"])
             )
         # Older files stored a password prompt and its answer as text.
         elif entry.get("mimetype") != "text/password":
-            items.append(
-                protocol.Console(
-                    id=item_id,
-                    execution_id=execution_id,
-                    seq=len(items),
-                    name=entry["name"],
-                    text=entry["text"],
-                )
+            content = protocol.ConsoleText(
+                stream=entry["name"], text=entry["text"]
             )
+        else:
+            continue
+        items.append(
+            protocol.Console(
+                id=protocol.ItemId(f"{execution_id}-{len(items)}"),
+                execution_id=execution_id,
+                seq=len(items),
+                content=content,
+            )
+        )
     return tuple(items)

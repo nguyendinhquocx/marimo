@@ -29,9 +29,10 @@ function record(
   return {
     run_id: "run-1",
     runtime_id: "r1",
-    caused_by: null,
+    caused_by_id: null,
     cell_id: "c1",
     code_fingerprint: "0f71456db2ea83f4",
+    created_at: null,
     state: {
       status: "completed",
       started_at: T0,
@@ -63,13 +64,14 @@ function run(
     notebook_id: "n1",
     runtime_id: "r1",
     origin: { kind: "cells", cell_ids: cells },
+    created_at: "2026-10-01T09:20:00Z",
     state:
       status === "completed"
         ? {
             status,
             started_at: null,
             completed_at: "2026-10-01T09:20:02Z",
-            outcome: "succeeded",
+            outcome: { kind: "succeeded" },
           }
         : status === "running"
           ? { status, started_at: "2026-10-01T09:20:01Z" }
@@ -183,14 +185,14 @@ describe("cellExecutionView", () => {
   });
 
   it("reports how the last completed execution ended, with its timing", () => {
-    const completedWith = (outcome: Protocol.Outcome) => ({
+    const completedWith = (outcome: Protocol.ExecutionOutcome) => ({
       status: "completed" as const,
       started_at: T0,
       completed_at: T1,
       outcome,
       depends_on: {},
     });
-    const ended = (outcome: Protocol.Outcome) =>
+    const ended = (outcome: Protocol.ExecutionOutcome) =>
       cellExecutionView(
         inputs({
           executions: [execution({ id: "e1", state: completedWith(outcome) })],
@@ -209,8 +211,8 @@ describe("cellExecutionView", () => {
       duration: 1500,
       live: true,
     });
-    const error = (kind: string): Protocol.Outcome => ({
-      kind: "error",
+    const error = (kind: string): Protocol.ExecutionOutcome => ({
+      kind: "failed",
       error: {
         kind,
         message: "",
@@ -222,15 +224,15 @@ describe("cellExecutionView", () => {
         related: [],
       },
     });
-    expect(ended(error("exception")).outcome).toBe("error");
-    const skipped: Protocol.Outcome = {
+    expect(ended(error("exception")).outcome).toBe("failed");
+    const skipped: Protocol.ExecutionOutcome = {
       kind: "skipped",
       reason: "ancestor-stopped",
       message: "",
       related: [],
     };
     expect(ended(skipped).outcome).toBe("skipped");
-    expect(ended({ kind: "interrupted" }).outcome).toBe("interrupted");
+    expect(ended({ kind: "cancelled" }).outcome).toBe("cancelled");
   });
 
   it("reads as queued from a request the stream has not shown a run for", () => {

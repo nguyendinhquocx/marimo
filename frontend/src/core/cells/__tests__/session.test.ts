@@ -171,7 +171,7 @@ describe("readExport", () => {
         expect(result.snapshot.results?.[0]?.execution.state).toHaveProperty(
           "outcome",
           {
-            kind: "error",
+            kind: "failed",
             error: expect.objectContaining({
               kind: "exception",
               name: "ValueError",
@@ -325,7 +325,7 @@ describe("readExport", () => {
       expect(result.snapshot?.results[0]?.execution.state).toHaveProperty(
         "outcome",
         {
-          kind: "error",
+          kind: "failed",
           error: expect.objectContaining({
             kind: "exception",
             name: "ValueError",
@@ -824,7 +824,7 @@ describe("readExport", () => {
         project_id: "embedded",
         path: null,
         name: "",
-        updated_at: null,
+        modified_at: null,
       });
       expect(result.snapshot.document).toMatchObject({
         notebook_id: "embedded",

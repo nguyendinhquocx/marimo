@@ -30,7 +30,7 @@ if TYPE_CHECKING:
     from starlette.applications import Starlette
 
     from marimo._config.types import OnCellChangeType
-    from marimo._core.protocol import RunOutcome
+    from marimo._core.backend import RunEnding
     from marimo._core.stream import RoutedEvent
     from tests._server.host.drive import Response
     from tests._server.host.staleness import Outdated
@@ -60,7 +60,7 @@ class Client:
         self,
         *cells: str,
         code: str | None = None,
-        outcome: RunOutcome = "succeeded",
+        outcome: RunEnding = "succeeded",
     ) -> None:
         """Run the named cells, or code in the scratchpad, to `outcome`."""
         body: dict[str, object] = (
@@ -91,7 +91,9 @@ class Client:
         while not completed(self.events):
             self.events.changed.clear()
             await self.events.changed.wait()
-        assert completed(self.events)[-1]["state"]["outcome"] == outcome
+        assert (
+            completed(self.events)[-1]["state"]["outcome"]["kind"] == outcome
+        )
 
     async def edit(self, cell: str, code: str) -> None:
         edited = await finished(
@@ -103,7 +105,7 @@ class Client:
                 {
                     "changes": [
                         {
-                            "kind": "put_cell",
+                            "kind": "replace_cell",
                             "base_etag": "*",
                             "cell": {"id": self.cells[cell], "code": code},
                         }
@@ -164,7 +166,9 @@ async def test_variables_outlive_the_run_that_bound_them(
         )
         execution = before.latest(c.cells["state"])
         assert execution is not None
-        assert getter.execution_id == getter.revision.execution == execution.id
+        assert (
+            getter.execution_id == getter.revision.execution_id == execution.id
+        )
         records = c.events.records
         bound = next(
             i
@@ -448,7 +452,7 @@ async def test_binding_a_name_outdates_its_unbound_readers(
     name: str,
     expression: str,
     binding: str,
-    outcome: RunOutcome,
+    outcome: RunEnding,
 ) -> None:
     async with client(
         tmp_path,
@@ -497,15 +501,15 @@ async def test_replaced_inputs_take_precedence_over_updates_and_edits(
 @pytest.mark.parametrize(
     ("code", "outcome", "reader"),
     [
-        ("if False:\n    x = 2", "succeeded", protocol.ErrorOutcome),
-        ("1 / 0\nx = 2", "failed", protocol.SkippedOutcome),
+        ("if False:\n    x = 2", "succeeded", protocol.ExecutionFailedOutcome),
+        ("1 / 0\nx = 2", "failed", protocol.ExecutionSkippedOutcome),
     ],
 )
 async def test_a_rerun_that_does_not_bind_a_name_outdates_its_readers(
     tmp_path: Path,
     code: str,
-    outcome: RunOutcome,
-    reader: type[protocol.Outcome],
+    outcome: RunEnding,
+    reader: type[protocol.ExecutionOutcome],
 ) -> None:
     async with client(
         tmp_path,
@@ -524,7 +528,7 @@ async def test_a_rerun_that_does_not_bind_a_name_outdates_its_readers(
         await c.run(
             "reader",
             outcome="failed"
-            if reader is protocol.ErrorOutcome
+            if reader is protocol.ExecutionFailedOutcome
             else "succeeded",
         )
         latest = (await c.snapshot()).latest(c.cells["reader"])
@@ -550,10 +554,10 @@ async def test_a_ui_update_outdates_lazy_readers(tmp_path: Path) -> None:
         start = len(c.events.records)
         await c.run(code="print(slider._id)")
         [object_id] = [
-            r["data"]["console"]["text"].strip()
+            r["data"]["console"]["content"]["text"].strip()
             for r in c.events.records[start:]
             if r.get("event") == "console"
-            and r["data"]["console"]["text"].strip()
+            and r["data"]["console"]["content"]["text"].strip()
         ]
         expected = replace(
             slider, preview="5", revision=replace(slider.revision, update=1)
@@ -688,7 +692,7 @@ async def test_restart_retains_results_without_restoring_python_values(
             lambda response: any(
                 r.get("event") == "runtime"
                 and r["data"]["runtime"]["id"] == runtime_id
-                and r["data"]["runtime"]["status"] == "running"
+                and r["data"]["runtime"]["state"]["status"] == "ready"
                 for r in response.records
             ),
             timeout=15,
@@ -786,7 +790,7 @@ async def test_outputs_restored_from_the_session_cache_are_current_results(
         # No run of this notebook's runtime produced it.
         assert (restored.run_id, restored.runtime_id) == (None, None)
         assert [
-            r["data"]["console"]["text"]
+            r["data"]["console"]["content"]["text"]
             for r in c.events.records
             if r.get("event") == "console"
         ] == ["hello\n"]

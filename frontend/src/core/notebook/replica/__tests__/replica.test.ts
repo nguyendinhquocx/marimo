@@ -95,7 +95,7 @@ const notebook = {
   path: null,
   name: "Notebook",
   operations: ["notebook.edit"],
-  updated_at: null,
+  modified_at: null,
 };
 
 describe("NotebookReplica lifetime", () => {
@@ -161,7 +161,9 @@ describe("NotebookReplica lifetime", () => {
       const events = fixtureEvents("notebook-events.sse");
       events.forEach(receive);
       const previous = store.get(client.executionsAtom).scratchConsole;
-      expect(previous?.items.get("o3")).toMatchObject({ text: "2\n" });
+      expect(previous?.items.get("o3")).toMatchObject({
+        content: { kind: "text", text: "2\n" },
+      });
 
       receive({ event: "reset", data: {} });
       for (const event of events) {

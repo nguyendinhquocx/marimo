@@ -7,7 +7,6 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from marimo._core import backend as be, protocol
-from marimo._core.code import code_fingerprint
 from marimo._messaging.cell_output import CellChannel
 from marimo._messaging.errors import (
     ANCESTOR_RAISED,
@@ -61,7 +60,7 @@ class _Execution:
     id: protocol.ExecutionId
     cell_id: str
     ended: bool = False
-    outcome: protocol.Outcome = field(
+    outcome: protocol.ExecutionOutcome = field(
         default_factory=protocol.SucceededOutcome
     )
     errors: list[Error] = field(default_factory=list)
@@ -75,11 +74,9 @@ class RunTranslator:
     def __init__(
         self,
         run_id: protocol.RunId,
-        code: str | None,
         cell_order: CellOrder = _unordered,
     ) -> None:
         self.run_id = run_id
-        self._code = code
         self._cell_order = cell_order
         self._finished = False
         self.completed = False
@@ -180,8 +177,7 @@ class RunTranslator:
                     if execution.cell_id == SCRATCH_CELL_ID
                     else execution.cell_id,
                     notification.code_fingerprint,
-                    code if execution.cell_id == SCRATCH_CELL_ID else None,
-                    caused_by=parent.id if parent is not None else None,
+                    caused_by_id=parent.id if parent is not None else None,
                 ),
             ),
         )
@@ -204,11 +200,11 @@ class RunTranslator:
             if not isinstance(e, MarimoInterruptionError) and e not in skips
         ]
         if error is not None:
-            execution.outcome = protocol.ErrorOutcome(error)
+            execution.outcome = protocol.ExecutionFailedOutcome(error)
         elif skipped is not None:
             execution.outcome = _declined(skipped, execution.cell_id)
         elif exceptions:
-            execution.outcome = protocol.ErrorOutcome(
+            execution.outcome = protocol.ExecutionFailedOutcome(
                 _describe(
                     exceptions[0],
                     cell_id=None
@@ -221,14 +217,16 @@ class RunTranslator:
         elif skips:
             execution.outcome = _skipped(skips[0], execution.cell_id)
         elif interrupted or execution.errors:
-            execution.outcome = protocol.InterruptedOutcome()
+            execution.outcome = protocol.CancelledOutcome()
         execution.ended = True
         out: list[be.Message] = [
             be.Completed(execution.id, execution.outcome, depends_on or {})
         ]
-        self._failed |= isinstance(execution.outcome, protocol.ErrorOutcome)
+        self._failed |= isinstance(
+            execution.outcome, protocol.ExecutionFailedOutcome
+        )
         self.interrupted |= isinstance(
-            execution.outcome, protocol.InterruptedOutcome
+            execution.outcome, protocol.CancelledOutcome
         )
         # The core keeps the reported outcome; release the payload here
         # while the translator stays alive for late output.
@@ -245,33 +243,27 @@ class RunTranslator:
         self._finished = True
         error = error or self._error
         out: list[be.Message] = []
-        if self._code is not None and not self._executions:
-            out.append(
-                self._plan(
-                    ExecutionNotification(
-                        execution_id=f"{self.run_id}-unsubmitted",
-                        cell_id=SCRATCH_CELL_ID,
-                        run_id=self.run_id,
-                        phase="planned",
-                        code=self._code,
-                        code_fingerprint=code_fingerprint(self._code),
-                    )
-                )
-            )
         for execution in self._executions.values():
             out.extend(
                 self._conclude(
                     execution, error=error, interrupted=self.interrupted
                 )
             )
-        self._code = None
         self._error = None
-        outcome: protocol.RunOutcome = "succeeded"
+        outcome: be.RunEnding = "succeeded"
         if error is not None or self._failed:
             outcome = "failed"
         if self.interrupted:
-            outcome = "interrupted"
-        out.append(be.Done(self.run_id, outcome))
+            outcome = "cancelled"
+        out.append(
+            be.Done(
+                self.run_id,
+                outcome,
+                error.message
+                if error is not None and outcome == "failed"
+                else None,
+            )
+        )
         return out
 
     def _console(
@@ -314,13 +306,15 @@ class RunTranslator:
             ):
                 out.append(
                     be.Produced(
-                        protocol.Display(
+                        protocol.Console(
                             id=protocol.ItemId(
                                 f"{execution.id}-{execution.seq}"
                             ),
                             execution_id=execution.id,
                             seq=execution.seq,
-                            content=displayed(entry.mimetype, entry.data),
+                            content=protocol.ConsoleMedia(
+                                displayed(entry.mimetype, entry.data)
+                            ),
                         )
                     )
                 )
@@ -337,10 +331,12 @@ class RunTranslator:
                         id=protocol.ItemId(f"{execution.id}-{execution.seq}"),
                         execution_id=execution.id,
                         seq=execution.seq,
-                        name="stdout"
-                        if entry.channel == CellChannel.STDOUT
-                        else "stderr",
-                        text=str(entry.data),
+                        content=protocol.ConsoleText(
+                            stream="stdout"
+                            if entry.channel == CellChannel.STDOUT
+                            else "stderr",
+                            text=str(entry.data),
+                        ),
                     )
                 )
             )
@@ -420,7 +416,7 @@ class RunTranslators:
                 else None
             )
             translator = RunTranslator(
-                protocol.RunId(run_id), code, self._cell_order
+                protocol.RunId(run_id), self._cell_order
             )
             self.add(translator)
             out.append(
@@ -468,9 +464,9 @@ def variable_messages(notification: NotificationMessage) -> list[be.Message]:
     return out
 
 
-def displayed(mimetype: str, data: object) -> protocol.DisplayData:
+def displayed(mimetype: str, data: object) -> protocol.Media:
     """A rendered value as the stream carries it, with structured data as JSON."""
-    return protocol.DisplayData(
+    return protocol.Media(
         mimetype=str(mimetype),
         data=data if isinstance(data, str) else encode_json_str(data),
     )
@@ -506,14 +502,14 @@ def _skip_reason(error: Error) -> str | None:
     return None
 
 
-def _declined(reason: str, cell_id: str) -> protocol.SkippedOutcome:
+def _declined(reason: str, cell_id: str) -> protocol.ExecutionSkippedOutcome:
     """Describe an attempt the kernel ended without evaluating it."""
     message = (
         "Replaced by a newer execution of this cell before it started"
         if reason == "superseded"
         else "Did not run"
     )
-    return protocol.SkippedOutcome(
+    return protocol.ExecutionSkippedOutcome(
         reason=reason,
         message=message,
         related=(
@@ -526,7 +522,7 @@ def _declined(reason: str, cell_id: str) -> protocol.SkippedOutcome:
     )
 
 
-def _skipped(error: Error, cell_id: str) -> protocol.SkippedOutcome:
+def _skipped(error: Error, cell_id: str) -> protocol.ExecutionSkippedOutcome:
     """Describe a cell that did not evaluate because of the cells it names.
 
     The kernel's message ends where the editor appends a link to the cause,
@@ -546,7 +542,7 @@ def _skipped(error: Error, cell_id: str) -> protocol.SkippedOutcome:
         involved.append((error.raising_cell, "Raised an exception"))
     involved = [(cell, part) for cell, part in involved if cell != cell_id]
     involved.append((cell_id, "Did not run"))
-    return protocol.SkippedOutcome(
+    return protocol.ExecutionSkippedOutcome(
         reason=reason,
         message=error.describe().rstrip(": "),
         related=tuple(
@@ -588,7 +584,7 @@ def _describe(
     if isinstance(error, MarimoExceptionRaisedError):
         traceback = None
         if error.traceback:
-            traceback = protocol.DisplayData(
+            traceback = protocol.Media(
                 mimetype="text/html"
                 if is_code_highlighting(error.traceback)
                 else "text/plain",

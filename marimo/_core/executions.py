@@ -28,7 +28,7 @@ class CellExecution:
     """
 
     execution: protocol.Execution
-    outputs: tuple[protocol.Console | protocol.Display, ...] = ()
+    outputs: tuple[protocol.Console, ...] = ()
     variables: tuple[protocol.Variable, ...] = ()
     output: protocol.Output | None = None
 
@@ -50,8 +50,8 @@ class _Result:
     """A current execution and its items."""
 
     execution: protocol.Execution
-    outputs: dict[protocol.ItemId, protocol.Console | protocol.Display] = (
-        field(default_factory=dict)
+    outputs: dict[protocol.ItemId, protocol.Console] = field(
+        default_factory=dict
     )
     variables: dict[protocol.ItemId, protocol.Variable] = field(
         default_factory=dict
@@ -61,7 +61,7 @@ class _Result:
 
     def items(
         self,
-    ) -> list[protocol.Output | protocol.Console | protocol.Display]:
+    ) -> list[protocol.Output | protocol.Console]:
         own = [] if self.output is None else [self.output]
         return [*own, *self.outputs.values()]
 
@@ -74,7 +74,6 @@ class Removed:
         protocol.Execution
         | protocol.Output
         | protocol.Console
-        | protocol.Display
         | protocol.Variable
     ]
     id: str
@@ -104,23 +103,32 @@ Record = (
     | protocol.Execution
     | protocol.Output
     | protocol.Console
-    | protocol.Display
     | protocol.Variable
     | protocol.Input
 )
 Change = Record | Removed | Released | InputChanged
 
 
-def _settled(outcome: protocol.Outcome | None) -> bool:
+def _settled(outcome: protocol.ExecutionOutcome | None) -> bool:
     """Whether an outcome lets its run succeed: a value, or a skip by design."""
     return isinstance(
-        outcome, (protocol.SucceededOutcome, protocol.SkippedOutcome)
+        outcome, (protocol.SucceededOutcome, protocol.ExecutionSkippedOutcome)
     )
 
 
 def _completed(
-    run: protocol.Run, outcome: protocol.RunOutcome, now: datetime
+    run: protocol.Run,
+    ending: be.RunEnding,
+    now: datetime,
+    message: str | None = None,
 ) -> protocol.Run:
+    outcome: protocol.RunOutcome
+    if ending == "succeeded":
+        outcome = protocol.SucceededOutcome()
+    elif ending == "failed":
+        outcome = protocol.RunFailedOutcome(message=message)
+    else:
+        outcome = protocol.CancelledOutcome()
     started_at = (
         None
         if isinstance(run.state, protocol.RunQueued)
@@ -134,7 +142,9 @@ def _completed(
     )
 
 
-def _outcome(execution: protocol.Execution) -> protocol.Outcome | None:
+def _outcome(
+    execution: protocol.Execution,
+) -> protocol.ExecutionOutcome | None:
     state = execution.state
     return (
         state.outcome
@@ -145,7 +155,7 @@ def _outcome(execution: protocol.Execution) -> protocol.Outcome | None:
 
 def _ended(
     execution: protocol.Execution,
-    outcome: protocol.Outcome,
+    outcome: protocol.ExecutionOutcome,
     now: datetime,
     depends_on: dict[str, protocol.Revision | None] | None = None,
 ) -> protocol.Execution:
@@ -201,7 +211,9 @@ class Executions:
                     f"result for cell {cell_id} not in the document"
                 )
             outputs = sorted(retained.outputs, key=lambda item: item.seq)
-            items = [
+            items: list[
+                protocol.Output | protocol.Console | protocol.Variable
+            ] = [
                 *([] if retained.output is None else [retained.output]),
                 *outputs,
                 *retained.variables,
@@ -386,6 +398,7 @@ class Executions:
                                 notebook_id=runtime.notebook_id,
                                 runtime_id=runtime.id,
                                 origin=origin,
+                                created_at=utcnow(),
                                 state=protocol.RunQueued(),
                             )
                         )
@@ -468,7 +481,7 @@ class Executions:
                         media=display,
                     )
                     changes.append(result.output)
-            case be.Done(run_id=run_id, outcome=outcome):
+            case be.Done(run_id=run_id, outcome=outcome, message=message):
                 if (
                     tracked := self._runs.get(run_id)
                 ) is not None and not isinstance(
@@ -495,41 +508,59 @@ class Executions:
                         )
                     ):
                         raise ValueError(
-                            "a successful run cannot contain failed or interrupted executions"
+                            "a successful run cannot contain failed or cancelled executions"
                         )
                     changes.append(
                         self._set_run(
-                            _completed(tracked.run, outcome, utcnow())
+                            _completed(tracked.run, outcome, utcnow(), message)
                         )
                     )
                     tracked.retired.clear()
                     changes.extend(self._finish_run(tracked))
         return changes
 
-    def interrupt(
-        self, outcome: protocol.RunOutcome = "interrupted"
-    ) -> list[Change]:
-        """Complete every unfinished execution and run."""
+    def interrupt(self, *, failure: str | None = None) -> list[Change]:
+        """Complete every unfinished execution and run.
+
+        `failure` says why the runs failed, when they did. The execution
+        that was running fails with it too, and queued ones are cancelled.
+        """
         changes: list[Change] = []
         now = utcnow()
         for result in list(self._results.values()):
-            if not isinstance(
-                result.execution.state, protocol.ExecutionCompleted
-            ):
-                changes.extend(self._cancel_inputs(result))
-                changes.append(
-                    self._set_execution(
-                        _ended(
-                            result.execution,
-                            protocol.InterruptedOutcome(),
-                            now,
+            state = result.execution.state
+            if not isinstance(state, protocol.ExecutionCompleted):
+                ended: protocol.ExecutionOutcome = protocol.CancelledOutcome()
+                if failure is not None and isinstance(
+                    state, protocol.ExecutionRunning
+                ):
+                    ended = protocol.ExecutionFailedOutcome(
+                        error=protocol.Error(
+                            kind="internal",
+                            name=None,
+                            message=failure,
+                            traceback=None,
+                            source="marimo",
+                            severity="error",
+                            range=None,
+                            related=(),
                         )
                     )
+                changes.extend(self._cancel_inputs(result))
+                changes.append(
+                    self._set_execution(_ended(result.execution, ended, now))
                 )
         for tracked in list(self._runs.values()):
             if not isinstance(tracked.run.state, protocol.RunCompleted):
                 changes.append(
-                    self._set_run(_completed(tracked.run, outcome, now))
+                    self._set_run(
+                        _completed(
+                            tracked.run,
+                            "failed" if failure is not None else "cancelled",
+                            now,
+                            failure,
+                        )
+                    )
                 )
             tracked.retired.clear()
             changes.extend(self._finish_run(tracked))
@@ -576,13 +607,14 @@ class Executions:
                         id=entry.id,
                         run_id=run_id,
                         runtime_id=runtime.id,
-                        caused_by=entry.caused_by,
+                        caused_by_id=entry.caused_by_id,
                         cell_id=protocol.CellId(entry.cell_id)
                         if entry.cell_id is not None
                         else None,
                         code_fingerprint=protocol.CodeFingerprint(
                             entry.code_fingerprint
                         ),
+                        created_at=utcnow(),
                         state=protocol.ExecutionQueued(),
                     )
                 )

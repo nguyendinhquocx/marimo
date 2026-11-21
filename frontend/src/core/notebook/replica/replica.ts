@@ -5,7 +5,7 @@
 import { Logger } from "@/utils/Logger";
 import {
   createNotebookReducer,
-  type NotebookEvent,
+  type NotebookStreamEvent,
   NotebookEvents,
   StreamStopped,
 } from "@marimo-team/client";
@@ -40,7 +40,7 @@ import { runtime } from "./resources/runtime";
  *
  * Execution items provide the console, side-effect displays and input prompts.
  */
-export const EDITOR_EVENT_TYPES = [
+export const EDITOR_EVENT_KINDS = [
   "notebook",
   "cell",
   "document",
@@ -49,14 +49,13 @@ export const EDITOR_EVENT_TYPES = [
   "run",
   "execution",
   "console",
-  "display",
   "input",
   "output",
   "variable",
   "marimo",
 ] as const;
 
-type EditorEvent = NotebookEvent<(typeof EDITOR_EVENT_TYPES)[number]>;
+type EditorEvent = NotebookStreamEvent<(typeof EDITOR_EVENT_KINDS)[number]>;
 
 /** A native marimo notification, passed through without interpretation. */
 const MarimoMessage = z.object({ marimo: z.unknown() });
@@ -300,7 +299,7 @@ export function createNotebookReplica(
     const checkHealth = connected.checkHealth ?? (async () => true);
     store.set(backendAtom, connected);
     const { transport } = connected;
-    let events: NotebookEvents<(typeof EDITOR_EVENT_TYPES)[number]> | undefined;
+    let events: NotebookEvents<(typeof EDITOR_EVENT_KINDS)[number]> | undefined;
     let checkingHealth = false;
     let pendingNotifications: unknown[] = [];
     /** Mirror one stream into the atoms until it closes. */
@@ -310,7 +309,7 @@ export function createNotebookReplica(
         setStream(reducer.initial);
       }
       const current = new NotebookEvents(transport, {
-        types: EDITOR_EVENT_TYPES,
+        kinds: EDITOR_EVENT_KINDS,
         cursor,
         signal,
         // TODO(MO-8051): Gate editing and running on the notebook's operations
@@ -412,7 +411,7 @@ export function createNotebookReplica(
           }
           if (onItem) {
             for (const item of execution.items.values()) {
-              if (item.kind === "display") {
+              if (item.kind === "console" && item.content.kind === "media") {
                 onItem(execution.record, item, false);
               }
             }
@@ -454,14 +453,9 @@ export function createNotebookReplica(
           return;
         }
         case "console":
-        case "display":
         case "input": {
           const item =
-            event.event === "console"
-              ? event.data.console
-              : event.event === "display"
-                ? event.data.display
-                : event.data.input;
+            event.event === "console" ? event.data.console : event.data.input;
           const execution = executions.get(item.execution_id);
           if (execution && onItem) {
             const received = execution.items.get(item.id);
