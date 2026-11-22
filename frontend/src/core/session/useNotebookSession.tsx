@@ -58,7 +58,6 @@ import {
 } from "../kernel/session";
 import { cellError } from "../executions/output";
 import { getCellLogsForMessage } from "../cells/logs";
-import { setCellBlocked } from "../executions";
 import { initialRunCompletedAtom } from "../kernel/state";
 import { useLayoutActions } from "../layout/state";
 import { kioskModeAtom } from "../mode";
@@ -91,7 +90,6 @@ export function useNotebookSession(opts: { sessionId: SessionId }) {
   const store = useStore();
 
   const {
-    setCellReusability,
     showCommandOutput,
     hideConsoleInputs,
     clearDebuggerOutput,
@@ -223,21 +221,6 @@ export function useNotebookSession(opts: { sessionId: SessionId }) {
           executionId: msg.data.execution_id,
           inputIds: msg.data.input_ids,
         });
-        return;
-      case "cell-op":
-        if (msg.data.status != null) {
-          setCellBlocked(
-            store,
-            msg.data.cell_id,
-            msg.data.status === "disabled-transitively",
-          );
-        }
-        if (msg.data.serialization !== undefined) {
-          setCellReusability({
-            cell_id: msg.data.cell_id,
-            serialization: msg.data.serialization,
-          });
-        }
         return;
       case "callback-output":
         VirtualFileTracker.INSTANCE.trackCallbackOutput(msg.data);

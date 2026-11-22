@@ -1740,8 +1740,18 @@ async def test_the_notebook_stream_carries_cells_then_the_document(
     assert analysis["notebook_id"] == harness.notebook_id
     assert analysis["document_etag"] == document["etag"]
     assert analysis["cells"] == {
-        first["id"]: {"defs": ["x"], "refs": [], "errors": []},
-        second["id"]: {"defs": ["y"], "refs": ["x"], "errors": []},
+        first["id"]: {
+            "defs": ["x"],
+            "refs": [],
+            "diagnostics": [],
+            "parents": [],
+        },
+        second["id"]: {
+            "defs": ["y"],
+            "refs": ["x"],
+            "diagnostics": [],
+            "parents": [first["id"]],
+        },
     }
 
     # A filtered stream is a snapshot of the document alone, and a second

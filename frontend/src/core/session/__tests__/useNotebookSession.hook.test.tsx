@@ -54,6 +54,12 @@ import { ConnectionNotice } from "@/components/editor/alerts/connection-notice";
 import { kernelStartupErrorAtom } from "@/core/errors/state";
 import type { NotificationPayload } from "@/core/kernel/messages";
 import { useRuntimeManager } from "@/core/runtime/config";
+import { cellExecutionInputsAtom, cellExecutionView } from "@/core/executions";
+import {
+  cell,
+  CONFIG,
+  document as documentOf,
+} from "@/core/notebook/document/__tests__/fixtures";
 import { initialRunCompletedAtom } from "../../kernel/state";
 import { connectionAtom, startupProgressAtom } from "../../network/connection";
 import { generateSessionId } from "../../kernel/session";
@@ -352,6 +358,84 @@ describe("useNotebookSession messages", () => {
   function receive(payload: unknown) {
     act(() => connection(fake).receive(payload));
   }
+
+  it("keeps the last blocked indicator across edits until the host replaces the graph", () => {
+    const revision = documentOf().revision;
+    const graph = { a: [], b: ["a"], c: ["b"], d: [] };
+    function publish(version: number) {
+      const codes = {
+        a: "x = 1",
+        b: version < 3 ? "y = x" : "y = 0",
+        c: "print(y)",
+        d: version === 1 ? "0" : "1",
+      };
+      for (const [id, code] of Object.entries(codes)) {
+        const record = cell(id, code, {
+          version,
+          etag: id + version,
+          config: { ...CONFIG, disabled: id === "a" },
+        });
+        receive({ event: "cell", data: { cell: record } });
+      }
+      const document = {
+        ...revision,
+        version,
+        etag: String(version),
+        order: Object.keys(graph),
+      };
+      receive({ event: "document", data: { document } });
+    }
+    function analyze(
+      version: number,
+      parents: Record<string, string[]> | null,
+    ) {
+      const analysis = {
+        notebook_id: revision.notebook_id,
+        document_etag: String(version),
+        cells: Object.fromEntries(
+          Object.keys(graph).map((id) => [
+            id,
+            {
+              defs: [],
+              refs: [],
+              diagnostics: [],
+              ...(parents && { parents: parents[id] }),
+            },
+          ]),
+        ),
+      };
+      receive({ event: "analysis", data: { analysis } });
+    }
+
+    receive({
+      event: "notebook",
+      data: { notebook: MockExecutions.notebook() },
+    });
+    publish(1);
+    receive({ event: "ready", id: "1", data: {} });
+    const blocked = () => store.get(cellExecutionInputsAtom).blocked;
+    expect(blocked().size).toBe(0);
+    analyze(1, null);
+    expect(blocked().size).toBe(0);
+    analyze(1, graph);
+    expect(blocked()).toEqual(new Set(["b", "c"]));
+
+    const badge = () =>
+      cellExecutionView(store.get(cellExecutionInputsAtom), "b").shownBlock;
+    expect(badge()).toBe("current");
+    publish(2);
+    expect(blocked().size).toBe(0);
+    expect(badge()).toBe("stale");
+    analyze(2, graph);
+    expect(badge()).toBe("current");
+
+    publish(3);
+    analyze(2, graph);
+    expect(badge()).toBe("stale");
+    analyze(3, { ...graph, b: [] });
+    expect(badge()).toBeNull();
+    expect(blocked().size).toBe(0);
+  });
 
   it("records completion of the initial run", () => {
     const notification = {

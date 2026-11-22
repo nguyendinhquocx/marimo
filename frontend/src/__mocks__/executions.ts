@@ -262,6 +262,7 @@ export const MockExecutions = {
       ),
       requested: new Set(),
       blocked: new Set(),
+      shownBlocked: new Set(),
       runtimeId: null,
       ...extra,
     };
@@ -287,6 +288,7 @@ export const MockExecutions = {
       generationAtom: atom(1),
       backendAtom: atom<NotebookBackend | null>(null),
       notebookAtom: atom<Protocol.Notebook | null>(MockExecutions.notebook()),
+      analysisAtom: atom(null),
       documentAtom,
       shownDocumentAtom: documentAtom,
       runtimeAtom: atom(runtime),

@@ -2,16 +2,37 @@
 
 import type * as Protocol from "@marimo-team/client/protocol";
 import { describe, expect, it } from "vitest";
-import { CONFIG } from "@/core/notebook/document/__tests__/fixtures";
+import { cell, CONFIG } from "@/core/notebook/document/__tests__/fixtures";
 import type { Execution, Executions, Results } from "@/core/notebook/replica";
 import {
   anyRunning,
+  blockedDescendants,
   type CellExecutionInputs,
   cellExecutionView,
   onlyScratchRunning,
   queuedOrRunningCount,
   runningCellIds,
 } from "../select";
+
+it("counts only distinct disabled ancestors in a cycle", () => {
+  const analysis: Protocol.Analysis = {
+    notebook_id: "n1",
+    document_etag: "v1",
+    cells: {
+      a: { defs: [], refs: [], parents: ["b"], diagnostics: [] },
+      b: { defs: [], refs: [], parents: ["a"], diagnostics: [] },
+    },
+  };
+  const disabled = (id: string) =>
+    cell(id, "", { config: { ...CONFIG, disabled: true } });
+  const a = disabled("a");
+  expect(blockedDescendants(analysis, [a, cell("b", "")])).toEqual(
+    new Set(["b"]),
+  );
+  expect(blockedDescendants(analysis, [a, disabled("b")])).toEqual(
+    new Set(["a", "b"]),
+  );
+});
 
 const T0 = "2026-10-01T09:20:11Z";
 const T1 = "2026-10-01T09:20:12.500Z";
@@ -116,7 +137,15 @@ function inputs({
       { config: { ...CONFIG, disabled: disabled.includes(id) } },
     ]),
   );
-  return { executions: stream, results, cells, requested, blocked, runtimeId };
+  return {
+    executions: stream,
+    results,
+    cells,
+    requested,
+    blocked,
+    shownBlocked: blocked,
+    runtimeId,
+  };
 }
 
 describe("cellExecutionView", () => {
@@ -124,6 +153,7 @@ describe("cellExecutionView", () => {
     expect(cellExecutionView(inputs({}), "c1")).toEqual({
       status: "idle",
       blocked: false,
+      shownBlock: null,
       outcome: null,
       startedAt: null,
       duration: null,
@@ -153,6 +183,7 @@ describe("cellExecutionView", () => {
     expect(cellExecutionView(running, "c1")).toEqual({
       status: "running",
       blocked: false,
+      shownBlock: null,
       outcome: null,
       startedAt: Date.parse(T2),
       duration: null,
@@ -206,6 +237,7 @@ describe("cellExecutionView", () => {
     expect(value).toEqual({
       status: "idle",
       blocked: false,
+      shownBlock: null,
       outcome: "succeeded",
       startedAt: Date.parse(T0),
       duration: 1500,

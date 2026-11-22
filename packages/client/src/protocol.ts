@@ -1384,20 +1384,42 @@ export const VariableEvent = zod
 export type VariableEvent = zod.input<typeof VariableEvent>;
 export type VariableEventOutput = zod.output<typeof VariableEvent>;
 
+export const CellDiagnostic = zod.object({
+  source: zod.string().describe("Analyzer that defines the kind."),
+  kind: zod.string().describe("Identifier scoped to the source."),
+  severity: zod.enum(["error", "warning", "information", "hint"]),
+  message: zod.string(),
+  range: zod
+    .union([Range, zod.null()])
+    .describe(
+      "Span in this cell, or null for a whole-cell finding or unknown location.",
+    ),
+  related: zod.array(Related),
+});
+
+export type CellDiagnostic = zod.input<typeof CellDiagnostic>;
+export type CellDiagnosticOutput = zod.output<typeof CellDiagnostic>;
+
 export const CellAnalysis = zod
   .object({
     defs: zod.array(zod.string()).describe("Names this cell defines."),
     refs: zod
       .array(zod.string())
       .describe("Names this cell reads from other cells."),
-    errors: zod
-      .array(Error)
+    parents: zod
+      .array(CellId)
+      .optional()
+      .describe(
+        "Cell IDs of the direct dependencies in this revision. An empty list means no parents. Omitted when the host does not provide the graph.",
+      ),
+    diagnostics: zod
+      .array(CellDiagnostic)
       .describe(
         "Diagnostics about the code. Only an `error` affects scheduling. `multiple-definitions` lists the definers in `related`, each `range` at its definition; `cycle-dependencies` lists the cycle. Both are reported on every cell involved, differing only in `range`. Every other kind belongs to the analyzer named in `source`.",
       ),
   })
   .describe(
-    "What a cell's text implies: the names it defines and reads, which\nare the edges of the dependency graph, and the errors found in the\ntext alone or across the set of cells. A pure function of the\ncode, so two producers compute the same values.\n",
+    "The definitions, references, direct dependencies, and diagnostics for one cell at this document revision.",
   );
 
 export type CellAnalysis = zod.input<typeof CellAnalysis>;
