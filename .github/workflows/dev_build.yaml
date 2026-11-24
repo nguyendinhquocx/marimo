@@ -5,6 +5,7 @@ on:
     paths:
       - 'Makefile'
       - 'pyproject.toml'
+      - '.github/workflows/dev_build.yaml'
 
 permissions:
   contents: read
