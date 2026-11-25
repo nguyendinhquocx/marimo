@@ -7,7 +7,9 @@ import asyncio
 import os
 import stat
 import sys
+from threading import Thread
 from typing import TYPE_CHECKING
+from unittest.mock import Mock
 
 import msgspec
 import pytest
@@ -227,7 +229,26 @@ def test_discovery_reads_the_live_record_without_exposing_it(
         writer.remove()
 
 
-@pytest.mark.skipif(os.name != "posix", reason="POSIX discovery validation")
+def test_stale_cleanup_does_not_open_the_record_it_just_published(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(record_module, "marimo_state_dir", lambda: tmp_path)
+    pending: list[Thread] = []
+    monkeypatch.setattr(Thread, "start", lambda worker: pending.append(worker))
+    open_record = Mock(wraps=record_module._open_record)
+    monkeypatch.setattr(record_module, "_open_record", open_record)
+    writer = record_module.HostRecordFile(
+        url="http://127.0.0.1:2718/api/marimo/v1", token="private-token"
+    )
+    writer.write()
+    try:
+        [cleanup] = pending
+        cleanup.run()
+        open_record.assert_not_called()
+    finally:
+        writer.remove()
+
+
 @pytest.mark.parametrize(
     "invalid",
     [
@@ -237,21 +258,29 @@ def test_discovery_reads_the_live_record_without_exposing_it(
         "remote",
         "credentials",
         "stale",
+        "exited",
+        "access-denied",
+        "missing-offset",
+        "fallback",
         "large",
         "version",
     ],
 )
-def test_discovery_skips_untrusted_records(
+def test_discovery_and_cleanup_of_untrusted_records(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, invalid: str
 ) -> None:
     import json
 
+    if os.name != "posix" and invalid in ("directory", "file", "symlink"):
+        pytest.skip("POSIX discovery permissions")
     monkeypatch.setattr(record_module, "marimo_state_dir", lambda: tmp_path)
     writer = record_module.HostRecordFile(
         url="http://127.0.0.1:2718/api/marimo/v1", token="private-token"
     )
+    pending: list[Thread] = []
+    monkeypatch.setattr(Thread, "start", lambda worker: pending.append(worker))
     writer.write()
-    path = writer._path
+    path = writer._path.rename(writer._path.with_name("other.json"))
     data = json.loads(path.read_bytes())
     if invalid == "directory":
         path.parent.chmod(0o755)
@@ -270,11 +299,30 @@ def test_discovery_skips_untrusted_records(
             data["url"] = "http://user@127.0.0.1:2718/api/marimo/v1"
         elif invalid == "stale":
             data["process"]["started_at"] = "2000-01-01T00:00:00Z"
+        elif invalid in ("exited", "access-denied"):
+            import psutil
+
+            error = (
+                psutil.NoSuchProcess
+                if invalid == "exited"
+                else psutil.AccessDenied
+            )
+            monkeypatch.setattr(
+                psutil.Process, "status", Mock(side_effect=error(os.getpid()))
+            )
+        elif invalid == "fallback":
+            data["process"]["started_at"] = "2100-01-01T00:00:00Z"
+        elif invalid == "missing-offset":
+            data["process"]["started_at"] = "2000-01-01T00:00:00"
         else:
             data["version"] = 2
         path.write_text(json.dumps(data))
     try:
         assert list(record_module.discover_hosts()) == []
         assert path.exists()
+        [cleanup] = pending
+        assert cleanup.daemon
+        cleanup.run()
+        assert path.exists() == (invalid not in ("stale", "exited"))
     finally:
         writer.remove()

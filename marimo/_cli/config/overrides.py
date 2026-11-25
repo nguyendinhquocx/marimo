@@ -60,7 +60,12 @@ def _parse_value(raw: str, annotation: Any) -> Any:
                 and issubclass(item_type, msgspec.Struct)
             ):
                 return value
-        return [_parse_value(item, item_type) for item in shlex.split(raw)]
+        lexer = shlex.shlex(raw, posix=True)
+        lexer.whitespace_split = True
+        lexer.commenters = ""
+        # The invoking shell already handles escapes; preserve Windows paths.
+        lexer.escape = ""
+        return [_parse_value(item, item_type) for item in lexer]
     # Validate structured values through MarimoConfig, which also normalizes MCP tags.
     return json.loads(raw)
 
@@ -146,6 +151,17 @@ def resolve_cli_config(
                 if param.multiple and isinstance(value, tuple):
                     value = list(value)
                 _set_value(overrides, path, value)
+    server_overrides = overrides.get("server", {})
+    password_fields = ("token_password", "token_password_file")
+    supplied = [
+        name
+        for name in password_fields
+        if server_overrides.get(name) is not None
+    ]
+    if len(supplied) == 1:
+        # The explicit CLI source replaces the lower-priority alternative.
+        other = next(name for name in password_fields if name != supplied[0])
+        server_overrides[other] = None
     manager = get_default_config_manager(
         current_path=None
         if current_path and is_url(current_path)
