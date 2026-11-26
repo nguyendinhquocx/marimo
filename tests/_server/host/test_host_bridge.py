@@ -28,7 +28,6 @@ from marimo._messaging.notification import (
     ExecutionNotification,
     PdbInputNotification,
     StartupProgressNotification,
-    VariablesNotification,
 )
 from marimo._runtime.scratch import SCRATCH_CELL_ID
 from marimo._server.api.deps import AppStateBase
@@ -36,6 +35,10 @@ from marimo._server.host.bridge import SessionBridge
 from marimo._server.host.events import MarimoEvent, MarimoMessage
 from marimo._server.models.home import MarimoFile
 from marimo._server.workspace import FixedFilesWorkspace
+from marimo._session.file_change_handler import (
+    EditModeReloadStrategy,
+    FileChangeCoordinator,
+)
 from marimo._session.model import SessionMode
 from marimo._session.state.serialize import get_session_cache_file
 from marimo._utils.code import hash_code
@@ -542,16 +545,24 @@ async def test_host_edits_reach_the_session_as_one_transaction(
     manager: FakeManager, tmp_path: Path
 ) -> None:
     from marimo._ast.cell import CellConfig
-    from marimo._messaging.notebook import NotebookCell, NotebookDocument
+    from marimo._messaging.notebook import (
+        CreateCell,
+        NotebookCell,
+        NotebookDocument,
+        ReorderCells,
+        SetCode,
+        Transaction,
+    )
     from marimo._messaging.notification import (
         NotebookDocumentTransactionNotification,
     )
     from marimo._types.ids import CellId_t
 
     prepare(manager, tmp_path, "a.py")
+    existing_id, new_id = CellId_t("Hbol"), CellId_t("new")
     session = FakeSession(str(tmp_path / "a.py"))
     session.document = NotebookDocument(
-        [NotebookCell(CellId_t("Hbol"), "x = 1", "_", CellConfig())]
+        [NotebookCell(existing_id, "x = 1", "_", CellConfig())]
     )
     manager.sessions["browser-1"] = session
     bridge = SessionBridge(manager)  # type: ignore[arg-type]
@@ -565,32 +576,61 @@ async def test_host_edits_reach_the_session_as_one_transaction(
     response = await bridge.edit(
         record.id,
         [
+            protocol.ReplaceCell(
+                base_etag="*",
+                cell=protocol.CellInput(
+                    id=protocol.CellId(existing_id), code="x = 2"
+                ),
+            ),
             protocol.CreateCell(
                 cell=protocol.CellInput(
-                    id=protocol.CellId("new"), code="y = x"
+                    id=protocol.CellId(new_id), code="y = x"
                 ),
-            )
+            ),
         ],
         request_id="edit-1",
     )
 
-    assert set(response.cells) == {"new"}
-    assert session.document.cell_ids == ["Hbol", "new"]
-    (notification,) = session.notifications
-    assert isinstance(notification, NotebookDocumentTransactionNotification)
-    assert notification.transaction.source == "host"
-    # The session echoes the edit without publishing the document twice.
-    assert names(
-        [e for e in events if not isinstance(e.event, MarimoEvent)]
-    ) == [
-        "cell",
-        "document",
+    assert session.notifications == [
+        NotebookDocumentTransactionNotification(
+            transaction=Transaction(
+                changes=(
+                    SetCode(cell_id=existing_id, code="x = 2"),
+                    CreateCell(
+                        cell_id=new_id,
+                        code="y = x",
+                        name="_",
+                        config=CellConfig(),
+                        after=existing_id,
+                    ),
+                    ReorderCells(cell_ids=(existing_id, new_id)),
+                ),
+                source="host",
+                version=1,
+            )
+        )
     ]
-    assert [
-        e.event.data for e in events if isinstance(e.event, MarimoEvent)
-    ] == [MarimoMessage(notification)]
+    expected_cells = [(existing_id, "x = 2"), (new_id, "y = x")]
+    assert session.document.version == 1
+    assert [(c.id, c.code) for c in session.document.cells] == expected_cells
+
+    # The session echo stays internal. The host publishes the edit once.
+    updated, created, document = (event.event for event in events)
+    assert isinstance(updated, protocol.CellEvent)
+    assert isinstance(created, protocol.CellEvent)
+    assert isinstance(document, protocol.DocumentEvent)
+    published_cells = [
+        (e.data.cell.id, e.data.cell.code) for e in (updated, created)
+    ]
+    assert published_cells == expected_cells
+    assert all(
+        e.data.request_id == "edit-1" for e in (updated, created, document)
+    )
+    assert set(response.cells) == {existing_id, new_id}
+    assert document.data.document == response.document
+    assert response.document.order == (existing_id, new_id)
     assert notebook.document.etag == response.document.etag
-    assert "y = x" not in (tmp_path / "a.py").read_text()
+    assert (tmp_path / "a.py").read_text() == ""
     bridge.close()
 
 
@@ -916,10 +956,52 @@ async def test_an_edit_reaches_the_kernel_as_one_command(
     bridge.close()
 
 
-def replace_code(cell: protocol.Cell, code: str) -> protocol.ReplaceCell:
+def replace_code(cell: DocumentCell, code: str) -> protocol.ReplaceCell:
     return protocol.ReplaceCell(
         base_etag=cell.etag, cell=protocol.CellInput(id=cell.id, code=code)
     )
+
+
+async def test_watched_file_updates_the_saved_revision(
+    manager: FakeManager, tmp_path: Path
+) -> None:
+    from marimo._session.notebook import AppFileManager
+
+    prepare(manager, tmp_path, "a.py")
+    path = tmp_path / "a.py"
+    path.write_text(NOTEBOOK)
+    editor = FakeSession(str(path))
+    editor.app_file_manager = AppFileManager(str(path))
+    editor.document = editor.app_file_manager.app.cell_manager.document
+    manager.sessions["browser"] = editor
+    bridge = SessionBridge(manager)  # type: ignore[arg-type]
+    await bridge.open()
+    try:
+        (record,) = bridge.host.notebooks.values()
+        notebook = await bridge.host.notebook(record.id)
+        session = bridge.session_for_notebook(record.id)
+        assert session is not None
+        watcher = FileChangeCoordinator(
+            EditModeReloadStrategy(session.config_manager)
+        )
+
+        path.write_text(NOTEBOOK.replace("x = 1", "x = 2"))
+        await watcher.handle_change(path, session)
+        (cell,) = notebook.document
+        assert cell.code == "x = 2"
+        assert notebook.saved_etag == notebook.document.etag
+
+        edited = await bridge.edit(
+            record.id, [replace_code(cell, "x = 3")], request_id="edit"
+        )
+        assert edited.document.saved_etag != edited.document.etag
+
+        # The file now matches the editor, so the reload has no cell changes.
+        path.write_text(NOTEBOOK.replace("x = 1", "x = 3"))
+        await watcher.handle_change(path, session)
+        assert notebook.saved_etag == edited.document.etag
+    finally:
+        bridge.close()
 
 
 async def test_save_writes_the_cells_and_keeps_the_app_config(
@@ -1304,7 +1386,9 @@ async def test_session_notifications_join_the_notebook_stream_once(
     bridge.host.subscribe(other.append, notebook_id=b.id)
     bridge.host.subscribe(filtered.append, notebook_id=a.id, kinds={"marimo"})
 
-    variables = VariablesNotification(variables=[])
+    progress = StartupProgressNotification(
+        phase="starting-kernel", logs="", log_mode="replace"
+    )
     planned = ExecutionNotification(
         run_id="run-1",
         execution_id="execution-1",
@@ -1315,17 +1399,17 @@ async def test_session_notifications_join_the_notebook_stream_once(
     )
     cell = CellNotification(cell_id="cell-1", status="queued")
     prompt = PdbInputNotification(cell_id="cell-1", input_id="p1")
-    session.broadcast(variables)
+    session.broadcast(progress)
     session.broadcast(planned)
     session.broadcast(cell)
     session.broadcast(prompt)
     session.session_view.snapshot_notifications.return_value = [
         cell,
         prompt,
-        variables,
+        progress,
     ]
     assert [e.event.data for e in bridge.session_snapshot(a.id)] == [
-        MarimoMessage(variables)
+        MarimoMessage(progress)
     ]
 
     session.session_view.snapshot_notifications.assert_called_once_with(
@@ -1336,7 +1420,7 @@ async def test_session_notifications_join_the_notebook_stream_once(
     assert catalog == other == []
     assert filtered == [e for e in first if isinstance(e.event, MarimoEvent)]
     assert [(e.run_id, e.event.data) for e in filtered] == [
-        (None, MarimoMessage(variables)),
+        (None, MarimoMessage(progress)),
     ]
     bridge.close()
 

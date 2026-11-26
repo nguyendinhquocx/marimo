@@ -3,7 +3,7 @@
 import { createStore } from "jotai";
 import { describe, expect, it } from "vitest";
 import { MockExecutions } from "@/__mocks__/executions";
-import { cellId } from "@/__tests__/branded";
+import { cellId, runId } from "@/__tests__/branded";
 import type * as Protocol from "@marimo-team/client/protocol";
 import {
   document as documentOf,
@@ -29,9 +29,9 @@ function run(
   cells: Protocol.CellId[],
   status: Protocol.RunState["status"] = "queued",
   id = "run-1",
-): Protocol.Run {
+): Protocol.RunOutput {
   return {
-    id,
+    id: runId(id),
     notebook_id: "n1",
     runtime_id: "r1",
     origin: { kind: "cells", cell_ids: cells },
@@ -50,7 +50,10 @@ function run(
   };
 }
 
-function withRuns(executions: Executions, runs: Protocol.Run[]): Executions {
+function withRuns(
+  executions: Executions,
+  runs: Protocol.RunOutput[],
+): Executions {
   return { ...executions, runs: new Map(runs.map((r) => [r.id, r])) };
 }
 

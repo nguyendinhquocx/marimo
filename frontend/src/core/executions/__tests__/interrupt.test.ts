@@ -1,5 +1,6 @@
 /* Copyright 2026 Marimo. All rights reserved. */
 
+import { runId } from "@/__tests__/branded";
 import type { ProblemOf } from "@marimo-team/client";
 import type * as Protocol from "@marimo-team/client/protocol";
 import { createStore } from "jotai";
@@ -23,9 +24,9 @@ function run(
   id: string,
   status: Protocol.RunState["status"] = "running",
   runtimeId = "r1",
-): Protocol.Run {
+): Protocol.RunOutput {
   return {
-    id,
+    id: runId(id),
     notebook_id: "n1",
     runtime_id: runtimeId,
     origin: { kind: "code", code: "pass" },
@@ -44,7 +45,7 @@ function run(
   };
 }
 
-function setup(runs: Protocol.Run[]) {
+function setup(runs: Protocol.RunOutput[]) {
   const store = createStore();
   const replica = MockExecutions.seed(store, [], MockExecutions.runtime());
   const interrupt = vi.fn<FakeInterrupt>(async () => ({
@@ -54,6 +55,7 @@ function setup(runs: Protocol.Run[]) {
   }));
   store.set(replica.backendAtom, fakeBackend({ interrupt }));
   store.set(replica.executionsAtom, {
+    variables: new Map(),
     runs: new Map(runs.map((run) => [run.id, run])),
     executions: new Map(),
     latest: new Map(),

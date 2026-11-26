@@ -35,6 +35,7 @@ import { shown } from "@/core/notebook/replica";
 type Store = ReturnType<typeof createStore>;
 
 const NO_EXECUTIONS: Executions = {
+  variables: new Map(),
   runs: new Map(),
   executions: new Map(),
   latest: new Map(),
@@ -42,7 +43,7 @@ const NO_EXECUTIONS: Executions = {
   scratch: null,
 };
 const NO_RESULTS: Results = new Map();
-const NO_CELLS: ReadonlyMap<Protocol.CellId, Protocol.Cell> = new Map();
+const NO_CELLS: ReadonlyMap<Protocol.CellId, Protocol.CellOutput> = new Map();
 const NO_REQUESTS: ReadonlySet<RunRequest> = new Set();
 const NO_REQUESTED: ReadonlySet<Protocol.CellId> = new Set();
 const NO_BLOCKED: ReadonlySet<Protocol.CellId> = new Set();
@@ -380,7 +381,7 @@ export function withdrawRequest(store: Store, request: RunRequest): void {
 export function acceptRun(
   store: Store,
   request: RunRequest,
-  run: Protocol.Run,
+  run: Protocol.RunOutput,
 ): void {
   const waitingAtom = atom(
     (get) =>

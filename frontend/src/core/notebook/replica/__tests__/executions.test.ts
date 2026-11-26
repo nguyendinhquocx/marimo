@@ -5,6 +5,9 @@ import * as Protocol from "@marimo-team/client/protocol";
 import { executions, itemsInOrder } from "../resources/executions";
 import { createNotebookReducer } from "@marimo-team/client";
 import { fixtureEvents } from "./fixtures";
+import { cellId, runId } from "@/__tests__/branded";
+
+const C3 = cellId("c3");
 
 const reducer = createNotebookReducer({ executions });
 const snapshot = fixtureEvents("notebook-events.sse");
@@ -46,46 +49,50 @@ describe("executions resource", () => {
     expect(itemsInOrder(scratch!).map((item) => item.kind)).toEqual([
       "console",
     ]);
-    expect(opening.runs.get("run-scratch")?.state.status).toBe("running");
+    expect(opening.runs.get(runId("run-scratch"))?.state.status).toBe(
+      "running",
+    );
     expect(opening.latest.size).toBe(0);
 
     const done = resource(replay(snapshot));
     expect(done.executions.get("e7")?.record.state.status).toBe("completed");
-    expect(done.runs.get("run-scratch")?.state).toMatchObject({
+    expect(done.runs.get(runId("run-scratch"))?.state).toMatchObject({
       outcome: { kind: "succeeded" },
     });
     const released = reducer.reduce(
       replay(snapshot),
       removed("run", "run-scratch", "98"),
     );
-    expect(resource(released).runs.has("run-scratch")).toBe(false);
+    expect(resource(released).runs.has(runId("run-scratch"))).toBe(false);
   });
 
   it("indexes a cell's execution while it is on the stream", () => {
     const start = replay(snapshot);
     const running = resource(replay(runCells.slice(0, 5), start));
-    expect(running.latest.get("c3")).toBe("e12");
+    expect(running.latest.get(C3)).toBe("e12");
     expect(running.executions.get("e12")?.record.state.status).toBe("running");
-    expect(running.latest.get("k7f2")).toBe("e13");
-    expect(running.runs.get("run-cells")?.state.status).toBe("running");
+    expect(running.latest.get(cellId("k7f2"))).toBe("e13");
+    expect(running.runs.get(runId("run-cells"))?.state.status).toBe("running");
 
     const done = replay(runCells, start);
     const e12 = resource(done).executions.get("e12");
     expect(e12?.record.state.status).toBe("completed");
-    expect([...e12!.variables.values()].map((v) => v.name)).toEqual(["x"]);
+    expect(
+      [...resource(done).variables.get(C3)!.values()].map((v) => v.name),
+    ).toEqual(["x"]);
     expect(resource(done).executions.get("e13")?.record.state).toHaveProperty(
       "depends_on",
       {
         x: { execution_id: "e12", update: 0 },
       },
     );
-    expect(resource(done).runs.get("run-cells")?.state).toMatchObject({
+    expect(resource(done).runs.get(runId("run-cells"))?.state).toMatchObject({
       outcome: { kind: "succeeded" },
     });
 
     const retired = replay(retire("e12", "e12-x"), done);
     expect(resource(retired).executions.has("e12")).toBe(false);
-    expect(resource(retired).latest.has("c3")).toBe(false);
+    expect(resource(retired).latest.has(C3)).toBe(false);
     const queued = reducer.reduce(
       retired,
       event({
@@ -104,7 +111,7 @@ describe("executions resource", () => {
         },
       }),
     );
-    expect(resource(queued).latest.get("c3")).toBe("e14");
+    expect(resource(queued).latest.get(C3)).toBe("e14");
     expect([...resource(queued).executions.keys()]).toEqual([
       "e7",
       "e13",
@@ -148,8 +155,8 @@ describe("executions resource", () => {
     );
     const e12 = resource(cleared).executions.get("e12")!;
     expect(ids(e12)).toEqual([]);
-    expect(e12.variables.size).toBe(0);
-    expect(resource(cleared).latest.get("c3")).toBe("e12");
+    expect(resource(cleared).variables.has(C3)).toBe(false);
+    expect(resource(cleared).latest.get(C3)).toBe("e12");
   });
 
   it("orders items by seq, replaces them by id, and drops orphans", () => {
@@ -172,7 +179,7 @@ describe("executions resource", () => {
     expect(prompted.latest.size).toBe(0);
     const gone = resource(replay(inputs, start));
     expect(gone.executions.has("e-input")).toBe(false);
-    expect(gone.runs.get("run-input")?.state).toMatchObject({
+    expect(gone.runs.get(runId("run-input"))?.state).toMatchObject({
       outcome: { kind: "cancelled" },
     });
 

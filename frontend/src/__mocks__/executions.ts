@@ -2,6 +2,7 @@
 
 /** Executions as the host would report them, for tests that read cell status. */
 
+import { cellId, runId } from "@/__tests__/branded";
 import type * as Protocol from "@marimo-team/client/protocol";
 import { atom, type createStore } from "jotai";
 import type { CellExecutionInputs } from "@/core/executions";
@@ -34,10 +35,13 @@ const T1 = "2026-10-01T09:20:12.500Z";
 let sequence = 0;
 
 const READY: Protocol.RuntimeState = { status: "ready" };
-const SUCCEEDED: Protocol.ExecutionOutcome = { kind: "succeeded" };
+const SUCCEEDED: Protocol.ExecutionOutcomeOutput = { kind: "succeeded" };
 
 /** An execution, or the output it set, as the stream delivers them. */
-type ExecutionFixture = Protocol.Execution & { items?: readonly Item[] };
+type ExecutionFixture = Protocol.ExecutionOutput & {
+  items?: readonly Item[];
+  bindings?: readonly Pick<Protocol.Variable, "name" | "type" | "preview">[];
+};
 type Entry = ExecutionFixture | Protocol.Output;
 export type ExecutionEntries = ReadonlyArray<Entry | readonly Entry[]>;
 
@@ -55,16 +59,16 @@ function split(entries: ExecutionEntries) {
 }
 
 function execution(
-  cellId: string | null,
-  state: Protocol.ExecutionState,
-): Protocol.Execution {
+  cid: string | null,
+  state: Protocol.ExecutionStateOutput,
+): Protocol.ExecutionOutput {
   sequence += 1;
   return {
     id: `e${sequence}`,
-    run_id: "run-1",
+    run_id: runId("run-1"),
     runtime_id: "r1",
     caused_by_id: null,
-    cell_id: cellId,
+    cell_id: cid === null ? null : cellId(cid),
     code_fingerprint: "0f71456db2ea83f4",
     created_at: T0,
     state,
@@ -73,8 +77,8 @@ function execution(
 
 function completed(
   cellId: string | null,
-  outcome: Protocol.ExecutionOutcome = SUCCEEDED,
-): Protocol.Execution {
+  outcome: Protocol.ExecutionOutcomeOutput = SUCCEEDED,
+): Protocol.ExecutionOutput {
   return execution(cellId, {
     status: "completed",
     started_at: T0,
@@ -95,7 +99,11 @@ function mirror(entries: ExecutionEntries): Executions {
   const { records, outputs } = split(entries);
   const executions = new Map<Protocol.ExecutionId, Execution>();
   const latest = new Map<Protocol.CellId, Protocol.ExecutionId>();
-  for (const { items = [], ...record } of records) {
+  const variables = new Map<
+    Protocol.CellId,
+    Map<Protocol.ItemId, Protocol.Variable>
+  >();
+  for (const { items = [], bindings = [], ...record } of records) {
     if (record.cell_id !== null) {
       // The host retains one execution per cell on the stream.
       const previous = latest.get(record.cell_id);
@@ -103,13 +111,27 @@ function mirror(entries: ExecutionEntries): Executions {
         executions.delete(previous);
       }
       latest.set(record.cell_id, record.id);
+      const bound = new Map<Protocol.ItemId, Protocol.Variable>();
+      for (const binding of bindings) {
+        const id = `${record.id}:${binding.name}`;
+        bound.set(id, {
+          ...binding,
+          id,
+          execution_id: record.id,
+          revision: { execution_id: record.id, update: 0 },
+        });
+      }
+      if (bound.size) {
+        variables.set(record.cell_id, bound);
+      } else {
+        variables.delete(record.cell_id);
+      }
     }
     executions.set(record.id, {
       record,
       output: outputs.get(record.id) ?? null,
       outputVersion: 0,
       items: new Map(items.map((item) => [item.id, item])),
-      variables: new Map(),
     });
   }
   const scratch = [...executions.values()].findLast(
@@ -117,6 +139,7 @@ function mirror(entries: ExecutionEntries): Executions {
       execution.record.cell_id === null && shown(execution) !== null,
   );
   return {
+    variables,
     runs: new Map(),
     executions,
     latest,
@@ -156,7 +179,7 @@ export const MockExecutions = {
   completed,
 
   /** A completed execution that took `elapsedMs`. */
-  took(cellId: string, elapsedMs: number): Protocol.Execution {
+  took(cellId: string, elapsedMs: number): Protocol.ExecutionOutput {
     return execution(cellId, {
       status: "completed",
       started_at: T0,
@@ -170,8 +193,8 @@ export const MockExecutions = {
   shown(
     cellId: string | null,
     display: Protocol.Media,
-    fields: Partial<Omit<Protocol.Execution, "id" | "state">> = {},
-  ): readonly [Protocol.Execution, Protocol.Output] {
+    fields: Partial<Omit<Protocol.ExecutionOutput, "id" | "state">> = {},
+  ): readonly [Protocol.ExecutionOutput, Protocol.Output] {
     const execution = { ...completed(cellId), ...fields };
     return [execution, output(execution, display)];
   },
@@ -179,8 +202,8 @@ export const MockExecutions = {
   /** A completed execution that ended in `error`, a ValueError by default. */
   failed(
     cellId: string,
-    error: Partial<Protocol.Error> = {},
-  ): Protocol.Execution {
+    error: Partial<Protocol.ErrorOutput> = {},
+  ): Protocol.ExecutionOutput {
     return completed(cellId, {
       kind: "failed",
       error: {
@@ -197,15 +220,15 @@ export const MockExecutions = {
     });
   },
 
-  errored(cellId: string): Protocol.Execution {
+  errored(cellId: string): Protocol.ExecutionOutput {
     return MockExecutions.failed(cellId);
   },
 
-  interrupted(cellId: string | null): Protocol.Execution {
+  interrupted(cellId: string | null): Protocol.ExecutionOutput {
     return completed(cellId, { kind: "cancelled" });
   },
 
-  skipped(cellId: string): Protocol.Execution {
+  skipped(cellId: string): Protocol.ExecutionOutput {
     return completed(cellId, {
       kind: "skipped",
       reason: "ancestor-stopped",
@@ -214,11 +237,11 @@ export const MockExecutions = {
     });
   },
 
-  running(cellId: string | null): Protocol.Execution {
+  running(cellId: string | null): Protocol.ExecutionOutput {
     return execution(cellId, { status: "running", started_at: T0 });
   },
 
-  queued(cellId: string | null): Protocol.Execution {
+  queued(cellId: string | null): Protocol.ExecutionOutput {
     return execution(cellId, { status: "queued" });
   },
 

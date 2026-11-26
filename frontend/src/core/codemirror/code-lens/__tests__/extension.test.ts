@@ -4,6 +4,10 @@ import { python } from "@codemirror/lang-python";
 import { EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  type AnalysisCells,
+  setNotebookAnalysis,
+} from "@/__tests__/notebook-analysis";
 import { cellId, variableName } from "@/__tests__/branded";
 import { languageAdapterState } from "@/core/codemirror/language/extension";
 import { LanguageAdapters } from "@/core/codemirror/language/LanguageAdapters";
@@ -20,8 +24,6 @@ import type { DataTable } from "@/core/kernel/messages";
 import { store } from "@/core/state/jotai";
 import { storageAtom } from "@/core/storage/state";
 import type { StorageNamespace } from "@/core/storage/types";
-import { variablesAtom } from "@/core/variables/state";
-import type { Variables } from "@/core/variables/types";
 import { openLensTarget } from "../actions";
 import {
   CODE_LENS_HOVER_DELAY_MS,
@@ -77,7 +79,7 @@ function seedStore(opts: {
   tables?: DataTable[];
   namespaces?: StorageNamespace[];
   connections?: DataSourceConnection[];
-  variables?: Variables;
+  cells?: AnalysisCells;
 }) {
   store.set(datasetsAtom, {
     tables: opts.tables ?? [],
@@ -99,7 +101,7 @@ function seedStore(opts: {
       ]),
     ),
   });
-  store.set(variablesAtom, opts.variables ?? {});
+  setNotebookAnalysis(store, opts.cells ?? {});
 }
 
 describe("codeLensBundle", () => {
@@ -147,6 +149,37 @@ describe("codeLensBundle", () => {
 
   it("returns an empty extension when disabled via `display.code_lens`", () => {
     expect(codeLensBundle(cellId("cell1"), false)).toEqual([]);
+  });
+
+  it.each([false, true])(
+    "skips unchanged lenses (with lens: %s)",
+    async (withLens) => {
+      seedStore({ tables: withLens ? [DF_TABLE] : [] });
+      const v = await mount("df = load()");
+      const dispatch = vi.spyOn(v, "dispatch");
+      setNotebookAnalysis(store, {});
+      vi.advanceTimersByTime(300);
+      await Promise.resolve();
+      expect(dispatch).not.toHaveBeenCalled();
+    },
+  );
+
+  it("refreshes widget positions after edits and clears removed entities", async () => {
+    seedStore({ tables: [DF_TABLE] });
+    const v = await mount("df = load()");
+    v.dispatch({ changes: { from: 0, insert: "\n" } });
+    vi.advanceTimersByTime(300);
+    await Promise.resolve();
+    lenses(v)[0].dispatchEvent(new MouseEvent("mouseenter"));
+    vi.advanceTimersByTime(CODE_LENS_HOVER_DELAY_MS);
+    expect(mountLensPopover).toHaveBeenLastCalledWith(
+      expect.any(HTMLElement),
+      expect.objectContaining({ pos: 3 }),
+    );
+    seedStore({});
+    vi.advanceTimersByTime(300);
+    await Promise.resolve();
+    expect(lenses(v)).toEqual([]);
   });
 
   it("renders a lens at a dataframe declaration", async () => {
@@ -379,16 +412,9 @@ describe("codeLensBundle", () => {
   });
 
   it("only decorates the declaring cell", async () => {
-    const dfName = variableName("df");
     seedStore({
       tables: [DF_TABLE],
-      variables: {
-        [dfName]: {
-          name: dfName,
-          declaredBy: [cellId("other-cell")],
-          usedBy: [cellId("cell1")],
-        },
-      },
+      cells: { "other-cell": { defs: ["df"] }, cell1: { refs: ["df"] } },
     });
     const v = await mount("df = load()");
 

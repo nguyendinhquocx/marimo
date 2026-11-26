@@ -3,7 +3,7 @@
 import type * as Protocol from "@marimo-team/client/protocol";
 import { describe, expect, it } from "vitest";
 import { type ExecutionEntries, MockExecutions } from "@/__mocks__/executions";
-import { cellId } from "@/__tests__/branded";
+import { cellId, runId } from "@/__tests__/branded";
 import { cell } from "@/core/notebook/document/__tests__/fixtures";
 import {
   type CellOutputInputs,
@@ -19,7 +19,9 @@ const HTML: Protocol.Media = { mimetype: "text/html", data: "<b>1</b>" };
 /** After every time the execution mocks use. */
 const LATER = "2026-10-01T09:30:00Z";
 
-function hostError(overrides: Partial<Protocol.Error>): Protocol.Error {
+function hostError(
+  overrides: Partial<Protocol.ErrorOutput>,
+): Protocol.ErrorOutput {
   return {
     kind: "exception",
     message: "boom",
@@ -319,7 +321,7 @@ describe("scratchOutputView", () => {
     expect(
       scratchOutputView({
         ...executions,
-        scratchFailure: { ...failure, runId: "run-2" },
+        scratchFailure: { ...failure, runId: runId("run-2") },
       })?.data,
     ).toEqual([
       { type: "unknown", msg: "Kernel channel closed", error_type: null },

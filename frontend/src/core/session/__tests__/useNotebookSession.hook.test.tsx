@@ -37,7 +37,7 @@ vi.mock("@/core/runtime/config", async () => {
 
 import { MockNotebook } from "@/__mocks__/notebook";
 import { Deferred } from "@/utils/Deferred";
-import { cellId } from "@/__tests__/branded";
+import { cellId, variableName } from "@/__tests__/branded";
 import { alertAtom, getPackageAlert } from "@/core/alerts/state";
 import { stagedAICellsAtom } from "@/core/ai/staged-cells";
 import { cellRuntimeAtom } from "@/core/cells/cells";
@@ -59,7 +59,10 @@ import {
   cell,
   CONFIG,
   document as documentOf,
+  withCells,
 } from "@/core/notebook/document/__tests__/fixtures";
+import { variablesAtom } from "@/core/variables/state";
+import { storageNamespacesAtom } from "@/core/storage/state";
 import { initialRunCompletedAtom } from "../../kernel/state";
 import { connectionAtom, startupProgressAtom } from "../../network/connection";
 import { generateSessionId } from "../../kernel/session";
@@ -75,7 +78,10 @@ import {
 import { MockExecutions } from "@/__mocks__/executions";
 import { VirtualFileTracker } from "@/core/static/virtual-file-tracker";
 import { useNotebookSession } from "../useNotebookSession";
+import type { CellAnalysis } from "@marimo-team/client/protocol";
 import { type NotebookTransport, StreamStopped } from "@marimo-team/client";
+
+const C1 = cellId("c1");
 
 const SESSION_ID = generateSessionId();
 
@@ -270,8 +276,8 @@ describe("useNotebookSession document model", () => {
       fixtureMessages("notebook-events.sse").forEach(connection(fake).receive);
     });
     const model = result.current.documentModel;
-    const code = () => store.get(model.documentAtom)?.cells.get("c1")?.code;
-    act(() => store.set(model.editAtom, (tx) => tx.setCode("c1", "local")));
+    const code = () => store.get(model.documentAtom)?.cells.get(C1)?.code;
+    act(() => store.set(model.editAtom, (tx) => tx.setCode(C1, "local")));
     expect(code()).toBe("local");
 
     await act(async () => connection(fake).drop());
@@ -335,7 +341,9 @@ describe("useNotebookSession document model", () => {
     });
 
     const model = result.current.documentModel;
-    act(() => store.set(model.editAtom, (tx) => tx.setCode("c3", "x = 42")));
+    act(() =>
+      store.set(model.editAtom, (tx) => tx.setCode(cellId("c3"), "x = 42")),
+    );
     notebook = store.get(notebookAtom);
     expect(notebook.cellData[cellId("c3")].code).toBe("x = 42");
 
@@ -421,7 +429,8 @@ describe("useNotebookSession messages", () => {
     expect(blocked()).toEqual(new Set(["b", "c"]));
 
     const badge = () =>
-      cellExecutionView(store.get(cellExecutionInputsAtom), "b").shownBlock;
+      cellExecutionView(store.get(cellExecutionInputsAtom), cellId("b"))
+        .shownBlock;
     expect(badge()).toBe("current");
     publish(2);
     expect(blocked().size).toBe(0);
@@ -435,6 +444,193 @@ describe("useNotebookSession messages", () => {
     analyze(3, { ...graph, b: [] });
     expect(badge()).toBeNull();
     expect(blocked().size).toBe(0);
+  });
+
+  function publishDocument(document: ReturnType<typeof documentOf>) {
+    for (const cell of document.cells.values()) {
+      receive({ event: "cell", data: { cell } });
+    }
+    receive({ event: "document", data: { document: document.revision } });
+  }
+
+  function analyzeVariables(
+    document: ReturnType<typeof documentOf>,
+    cells: Record<string, CellAnalysis>,
+  ) {
+    receive({
+      event: "analysis",
+      data: {
+        analysis: {
+          notebook_id: document.revision.notebook_id,
+          document_etag: document.revision.etag,
+          cells,
+        },
+      },
+    });
+  }
+
+  it("joins analysis to its defining cell's binding across updates, removal, and edits", () => {
+    const document = documentOf();
+    receive({
+      event: "notebook",
+      data: { notebook: MockExecutions.notebook() },
+    });
+    publishDocument(document);
+    const execution = MockExecutions.completed("c1");
+    const variable = {
+      id: "bound-x",
+      execution_id: execution.id,
+      name: "x",
+      type: "int",
+      preview: "1",
+      revision: { execution_id: execution.id, update: 0 },
+    };
+    receive({ event: "execution", data: { execution } });
+    receive({ event: "variable", data: { variable } });
+    expect(store.get(variablesAtom)).toEqual({});
+    receive({ event: "ready", data: {}, id: "1" });
+    const x = { name: "x", declaredBy: ["c1"], usedBy: [] };
+    expect(store.get(variablesAtom)).toEqual({
+      x: { ...x, dataType: "int", value: "1" },
+    });
+
+    analyzeVariables(document, {
+      c2: { defs: ["pending"], refs: ["x"], diagnostics: [] },
+      c1: { defs: ["x", "pending"], refs: [], diagnostics: [] },
+    });
+    const declarations = {
+      x: { ...x, usedBy: ["c2"] },
+      pending: { name: "pending", declaredBy: ["c2", "c1"], usedBy: [] },
+    };
+    expect(store.get(variablesAtom)).toEqual({
+      ...declarations,
+      x: { ...declarations.x, dataType: "int", value: "1" },
+    });
+
+    const updated = {
+      ...variable,
+      preview: "2",
+      revision: { ...variable.revision, update: 1 },
+    };
+    receive({ event: "variable", data: { variable: updated } });
+    const variables = store.get(variablesAtom);
+    expect(variables).toEqual({
+      ...declarations,
+      x: { ...declarations.x, dataType: "int", value: "2" },
+    });
+    receive({ event: "execution", data: { execution } });
+    expect(store.get(variablesAtom)).toBe(variables);
+    receive({ event: "variable.removed", data: { id: variable.id } });
+    expect(store.get(variablesAtom)).toEqual(declarations);
+
+    receive({ event: "variable", data: { variable } });
+    const moved = withCells(document, {
+      c1: cell("c1", ""),
+      c2: cell("c2", "x = 3"),
+    });
+    publishDocument(moved);
+    const duringEdit = { ...variable, name: "new_name", id: "bound-new" };
+    receive({ event: "variable", data: { variable: duringEdit } });
+    expect(store.get(variablesAtom)[variableName("new_name")]).toEqual({
+      name: "new_name",
+      declaredBy: ["c1"],
+      usedBy: [],
+      dataType: "int",
+      value: "1",
+    });
+    analyzeVariables(moved, {
+      c1: { defs: [], refs: [], diagnostics: [] },
+      c2: { defs: ["x"], refs: [], diagnostics: [] },
+    });
+    expect(store.get(variablesAtom)[variableName("new_name")]).toEqual({
+      name: "new_name",
+      declaredBy: [],
+      usedBy: [],
+      dataType: "int",
+      value: "1",
+    });
+    receive({ event: "variable.removed", data: { id: duringEdit.id } });
+    expect(store.get(variablesAtom)).toEqual({
+      x: { name: "x", declaredBy: ["c2"], usedBy: [] },
+    });
+    const beforeReset = store.get(variablesAtom);
+    receive({ event: "reset", data: {} });
+    expect(store.get(variablesAtom)).toEqual(beforeReset);
+    receive({
+      event: "notebook",
+      data: { notebook: MockExecutions.notebook("n2") },
+    });
+    publishDocument(documentOf("n2"));
+    receive({ event: "ready", data: {}, id: "2" });
+    expect(store.get(variablesAtom)).toEqual({});
+  });
+
+  it("keeps a live variable and its namespace through an incomplete edit", () => {
+    const document = documentOf();
+    const discover = () =>
+      act(() =>
+        connection(fake).send({
+          op: "storage-namespaces",
+          namespaces: ["x", "z"].map((name) => ({
+            name: variableName(name),
+            displayName: name,
+            protocol: "s3",
+            rootPath: "",
+            backendType: "obstore",
+            storageEntries: [],
+          })),
+        } satisfies NotificationPayload["data"]),
+      );
+    const namespaces = () =>
+      store.get(storageNamespacesAtom).map((ns) => ns.name);
+    receive({
+      event: "notebook",
+      data: { notebook: MockExecutions.notebook() },
+    });
+    publishDocument(document);
+    receive({ event: "ready", data: {}, id: "1" });
+    // Discovery can precede the binding from the same execution.
+    discover();
+    const execution = MockExecutions.completed("c1");
+    const variable = {
+      id: "bound-x",
+      execution_id: execution.id,
+      name: "x",
+      type: "S3Store",
+      preview: "s3://bucket",
+      revision: { execution_id: execution.id, update: 0 },
+    };
+    receive({ event: "execution", data: { execution } });
+    receive({ event: "variable", data: { variable } });
+    analyzeVariables(document, {
+      c1: { defs: ["x"], refs: [], diagnostics: [] },
+    });
+    const beforeEdit = store.get(variablesAtom);
+    const edited = withCells(document, { c1: cell("c1", "x = (") });
+    publishDocument(edited);
+    analyzeVariables(edited, { c1: { defs: [], refs: [], diagnostics: [] } });
+    expect(namespaces()).toEqual(["x", "z"]);
+    expect(store.get(variablesAtom)).toEqual({
+      x: {
+        name: "x",
+        declaredBy: [],
+        usedBy: [],
+        dataType: "S3Store",
+        value: "s3://bucket",
+      },
+    });
+
+    publishDocument(document);
+    analyzeVariables(document, {
+      c1: { defs: ["x"], refs: [], diagnostics: [] },
+    });
+    expect(namespaces()).toEqual(["x", "z"]);
+    expect(store.get(variablesAtom)).toEqual(beforeEdit);
+    receive({ event: "variable.removed", data: { id: variable.id } });
+    expect(namespaces()).toEqual(["z"]);
+    expect(store.get(variablesAtom)).toEqual({
+      x: { name: "x", declaredBy: ["c1"], usedBy: [] },
+    });
   });
 
   it("records completion of the initial run", () => {

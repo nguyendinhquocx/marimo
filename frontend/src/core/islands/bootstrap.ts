@@ -190,8 +190,6 @@ function handleNotification(
       case "pdb-output":
       case "breakpoints":
       case "active-line":
-      case "variables":
-      case "variable-values":
       case "data-column-preview":
       case "sql-table-preview":
       case "sql-table-list-preview":
@@ -206,11 +204,8 @@ function handleNotification(
       case "secret-keys-result":
       case "startup-logs":
       case "startup-progress":
-      case "interrupted":
-      case "cache-cleared":
       case "cache-info":
       case "kernel-startup-error":
-      case "notebook-document-transaction":
         return;
 
       case "completed-run":

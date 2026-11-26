@@ -220,14 +220,15 @@ export const NotebookEvent = zod
 export type NotebookEvent = zod.input<typeof NotebookEvent>;
 export type NotebookEventOutput = zod.output<typeof NotebookEvent>;
 
-export const CellId = zod
+const CellId = zod
   .string()
   .min(1)
   .describe(
     "Identifies a cell within its notebook. Stable while the host serves the notebook; whether it survives a reload of the store depends on the format. `setup` is the setup cell.",
-  );
-
-export type CellId = zod.input<typeof CellId>;
+  )
+  .brand("CellId");
+type CellId = zod.output<typeof CellId>;
+export type { CellId };
 export type CellIdOutput = zod.output<typeof CellId>;
 
 export const Etag = zod
@@ -643,14 +644,15 @@ export const AttachmentEvent = zod
 export type AttachmentEvent = zod.input<typeof AttachmentEvent>;
 export type AttachmentEventOutput = zod.output<typeof AttachmentEvent>;
 
-export const RunId = zod
+const RunId = zod
   .string()
   .min(1)
   .describe(
     "Identifies a run independently of the request's `Idempotency-Key`. Events carry the key in `request_id`.",
-  );
-
-export type RunId = zod.input<typeof RunId>;
+  )
+  .brand("RunId");
+type RunId = zod.output<typeof RunId>;
+export type { RunId };
 export type RunIdOutput = zod.output<typeof RunId>;
 
 export const RunCellsOrigin = zod.object({
@@ -1596,7 +1598,7 @@ export const CellRemovedEvent = zod
       .min(1)
       .optional()
       .describe("The resume cursor. Omitted on snapshot and reset events."),
-    data: RemovedMessage,
+    data: RemovedMessage.extend({ id: CellId }),
   })
   .describe("The `cell.removed` event, carried by the notebook stream.");
 
@@ -1647,7 +1649,7 @@ export const RunRemovedEvent = zod
       .min(1)
       .optional()
       .describe("The resume cursor. Omitted on snapshot and reset events."),
-    data: RemovedMessage,
+    data: RemovedMessage.extend({ id: RunId }),
   })
   .describe("The `run.removed` event, carried by the notebook stream.");
 

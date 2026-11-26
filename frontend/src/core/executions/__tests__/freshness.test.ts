@@ -2,8 +2,12 @@
 
 import type * as Protocol from "@marimo-team/client/protocol";
 import { describe, expect, it } from "vitest";
-import type { Execution, Executions, Result } from "@/core/notebook/replica";
+import type { Executions, Result } from "@/core/notebook/replica";
 import { type CellFreshnessInputs, freshnessOf } from "../freshness";
+import { cellId, runId } from "@/__tests__/branded";
+
+const C3 = cellId("c3");
+const FIXTURE_CELL = cellId("k7f2");
 
 const T0 = "2026-10-01T09:20:11Z";
 const T1 = "2026-10-01T09:20:12.500Z";
@@ -15,10 +19,10 @@ const K7F2_FINGERPRINT = "db2b1c9e4a7f0d36";
 function cell(
   id: string,
   fingerprint: string,
-  overrides: Partial<Protocol.Cell> = {},
-): Protocol.Cell {
+  overrides: Partial<Protocol.CellOutput> = {},
+): Protocol.CellOutput {
   return {
-    id,
+    id: cellId(id),
     notebook_id: "n1",
     code: null,
     name: "_",
@@ -35,13 +39,13 @@ function cell(
   };
 }
 
-const SUCCEEDED: Protocol.ExecutionOutcome = { kind: "succeeded" };
+const SUCCEEDED: Protocol.ExecutionOutcomeOutput = { kind: "succeeded" };
 
 /** A completed state that read `depends_on`. */
 function completed(
-  depends_on: Protocol.ExecutionCompleted["depends_on"] = {},
-  outcome: Protocol.ExecutionOutcome = SUCCEEDED,
-): Protocol.ExecutionCompleted {
+  depends_on: Protocol.ExecutionCompletedOutput["depends_on"] = {},
+  outcome: Protocol.ExecutionOutcomeOutput = SUCCEEDED,
+): Protocol.ExecutionCompletedOutput {
   return {
     status: "completed",
     started_at: T0,
@@ -52,14 +56,14 @@ function completed(
 }
 
 function record(
-  fields: Partial<Protocol.Execution> & {
+  fields: Partial<Protocol.ExecutionOutput> & {
     id: string;
-    cell_id: string;
+    cell_id: Protocol.CellId;
     code_fingerprint: string;
   },
-): Protocol.Execution {
+): Protocol.ExecutionOutput {
   return {
-    run_id: "run-1",
+    run_id: runId("run-1"),
     runtime_id: "r1",
     caused_by_id: null,
     created_at: null,
@@ -84,9 +88,9 @@ function variable(
 }
 
 function execution(
-  rec: Protocol.Execution,
+  rec: Protocol.ExecutionOutput,
   variables: Protocol.Variable[] = [],
-): Execution {
+) {
   return {
     record: rec,
     output: null,
@@ -101,15 +105,20 @@ function inputs({
   executions,
   results = executions.map((e) => e.record),
 }: {
-  cells: Protocol.Cell[];
-  executions: Execution[];
+  cells: Protocol.CellOutput[];
+  executions: ReturnType<typeof execution>[];
   /** Defaults to the executions on the stream. */
-  results?: Protocol.Execution[];
+  results?: Protocol.ExecutionOutput[];
 }): CellFreshnessInputs {
   const stream: Executions = {
     results: new Map(),
     scratch: null,
     runs: new Map(),
+    variables: new Map(
+      executions.flatMap((e) =>
+        e.record.cell_id === null ? [] : [[e.record.cell_id, e.variables]],
+      ),
+    ),
     executions: new Map(executions.map((e) => [e.record.id, e])),
     latest: new Map(
       executions.flatMap((e) =>
@@ -140,12 +149,12 @@ const c3 = cell("c3", C3_FINGERPRINT);
 const k7f2 = cell("k7f2", K7F2_FINGERPRINT);
 const e12 = record({
   id: "e12",
-  cell_id: "c3",
+  cell_id: C3,
   code_fingerprint: C3_FINGERPRINT,
 });
 const e13 = record({
   id: "e13",
-  cell_id: "k7f2",
+  cell_id: FIXTURE_CELL,
   code_fingerprint: K7F2_FINGERPRINT,
   state: completed({ x: { execution_id: "e12", update: 0 } }),
 });
@@ -153,11 +162,11 @@ const e13 = record({
 describe("cellFreshness", () => {
   it("is current for a cell that never completed, having nothing to compare", () => {
     const state = inputs({ cells: [c3], executions: [] });
-    expect(freshnessOf(state)("c3")).toEqual({
+    expect(freshnessOf(state)(C3)).toEqual({
       sourceChanged: false,
       inputsChanged: false,
     });
-    expect(freshnessOf(state)("missing")).toEqual({
+    expect(freshnessOf(state)(cellId("missing"))).toEqual({
       sourceChanged: false,
       inputsChanged: false,
     });
@@ -169,11 +178,11 @@ describe("cellFreshness", () => {
       executions: [execution(e12, [variable("x", "e12")]), execution(e13)],
     });
     const freshness = freshnessOf(state);
-    expect(freshness("c3")).toEqual({
+    expect(freshness(C3)).toEqual({
       sourceChanged: false,
       inputsChanged: false,
     });
-    expect(freshness("k7f2")).toEqual({
+    expect(freshness(FIXTURE_CELL)).toEqual({
       sourceChanged: false,
       inputsChanged: false,
     });
@@ -185,11 +194,11 @@ describe("cellFreshness", () => {
       executions: [execution(e12, [variable("x", "e12", 1)]), execution(e13)],
     });
     const freshness = freshnessOf(state);
-    expect(freshness("c3")).toEqual({
+    expect(freshness(C3)).toEqual({
       sourceChanged: false,
       inputsChanged: false,
     });
-    expect(freshness("k7f2")).toEqual({
+    expect(freshness(FIXTURE_CELL)).toEqual({
       sourceChanged: false,
       inputsChanged: true,
     });
@@ -201,12 +210,12 @@ describe("cellFreshness", () => {
       executions: [execution(e12, [variable("x", "e12")]), execution(e13)],
     });
     const freshness = freshnessOf(state);
-    expect(freshness("c3")).toEqual({
+    expect(freshness(C3)).toEqual({
       sourceChanged: true,
       inputsChanged: false,
     });
     // The dependent's own source and the values it read are as they were.
-    expect(freshness("k7f2")).toEqual({
+    expect(freshness(FIXTURE_CELL)).toEqual({
       sourceChanged: false,
       inputsChanged: false,
     });
@@ -216,12 +225,12 @@ describe("cellFreshness", () => {
     const m = cell("m", "aaaa111122223333");
     const e14 = record({
       id: "e14",
-      cell_id: "c3",
+      cell_id: C3,
       code_fingerprint: C3_FINGERPRINT,
     });
     const e15 = record({
       id: "e15",
-      cell_id: "m",
+      cell_id: cellId("m"),
       code_fingerprint: "aaaa111122223333",
       state: completed({ y: { execution_id: "e13", update: 0 } }),
     });
@@ -234,11 +243,11 @@ describe("cellFreshness", () => {
       ],
     });
     const freshness = freshnessOf(state);
-    expect(freshness("k7f2")).toEqual({
+    expect(freshness(FIXTURE_CELL)).toEqual({
       sourceChanged: false,
       inputsChanged: true,
     });
-    expect(freshness("m")).toEqual({
+    expect(freshness(cellId("m"))).toEqual({
       sourceChanged: false,
       inputsChanged: true,
     });
@@ -247,14 +256,14 @@ describe("cellFreshness", () => {
   it("is outdated as replaced once the binding execution runs again", () => {
     const e14 = record({
       id: "e14",
-      cell_id: "c3",
+      cell_id: C3,
       code_fingerprint: C3_FINGERPRINT,
     });
     const state = inputs({
       cells: [c3, k7f2],
       executions: [execution(e14, [variable("x", "e14")]), execution(e13)],
     });
-    expect(freshnessOf(state)("k7f2")).toEqual({
+    expect(freshnessOf(state)(FIXTURE_CELL)).toEqual({
       sourceChanged: false,
       inputsChanged: true,
     });
@@ -263,7 +272,7 @@ describe("cellFreshness", () => {
   it("is outdated as replaced while the binding cell runs again and the name is unbound", () => {
     const queued = record({
       id: "e14",
-      cell_id: "c3",
+      cell_id: C3,
       code_fingerprint: C3_FINGERPRINT,
       state: { status: "queued" },
     });
@@ -273,12 +282,12 @@ describe("cellFreshness", () => {
       results: [e12, e13],
     });
     const freshness = freshnessOf(state);
-    expect(freshness("k7f2")).toEqual({
+    expect(freshness(FIXTURE_CELL)).toEqual({
       sourceChanged: false,
       inputsChanged: true,
     });
     // The retained result for c3 still compares by its own fingerprint.
-    expect(freshness("c3")).toEqual({
+    expect(freshness(C3)).toEqual({
       sourceChanged: false,
       inputsChanged: false,
     });
@@ -287,7 +296,7 @@ describe("cellFreshness", () => {
   it("is outdated as replaced once a name it read as unbound is bound", () => {
     const reader = record({
       id: "e20",
-      cell_id: "k7f2",
+      cell_id: FIXTURE_CELL,
       code_fingerprint: K7F2_FINGERPRINT,
       state: completed({ y: null }),
     });
@@ -295,7 +304,7 @@ describe("cellFreshness", () => {
       cells: [c3, k7f2],
       executions: [execution(reader)],
     });
-    expect(freshnessOf(unbound)("k7f2")).toEqual({
+    expect(freshnessOf(unbound)(FIXTURE_CELL)).toEqual({
       sourceChanged: false,
       inputsChanged: false,
     });
@@ -304,7 +313,7 @@ describe("cellFreshness", () => {
       cells: [c3, k7f2],
       executions: [execution(e12, [variable("y", "e12")]), execution(reader)],
     });
-    expect(freshnessOf(bound)("k7f2")).toEqual({
+    expect(freshnessOf(bound)(FIXTURE_CELL)).toEqual({
       sourceChanged: false,
       inputsChanged: true,
     });
@@ -313,7 +322,7 @@ describe("cellFreshness", () => {
   it("reports both facts when the source and a value it read changed", () => {
     const reader = record({
       id: "e21",
-      cell_id: "k7f2",
+      cell_id: FIXTURE_CELL,
       code_fingerprint: "stale",
       state: completed({
         x: { execution_id: "e12", update: 0 },
@@ -327,7 +336,7 @@ describe("cellFreshness", () => {
         execution(reader),
       ],
     });
-    expect(freshnessOf(state)("k7f2")).toEqual({
+    expect(freshnessOf(state)(FIXTURE_CELL)).toEqual({
       sourceChanged: true,
       inputsChanged: true,
     });
@@ -336,7 +345,7 @@ describe("cellFreshness", () => {
   it("compares a skipped execution by the dependencies it would have read", () => {
     const skipped = record({
       id: "e22",
-      cell_id: "k7f2",
+      cell_id: FIXTURE_CELL,
       code_fingerprint: K7F2_FINGERPRINT,
       state: completed(
         { x: { execution_id: "e12", update: 0 } },
@@ -355,7 +364,7 @@ describe("cellFreshness", () => {
         execution(skipped),
       ],
     });
-    expect(freshnessOf(state)("k7f2")).toEqual({
+    expect(freshnessOf(state)(FIXTURE_CELL)).toEqual({
       sourceChanged: false,
       inputsChanged: true,
     });
@@ -367,7 +376,7 @@ describe("cellFreshness", () => {
       executions: [execution(e12, [variable("x", "e12")]), execution(e13)],
       results: [e12, e13],
     });
-    expect(freshnessOf(state)("c3")).toEqual({
+    expect(freshnessOf(state)(C3)).toEqual({
       sourceChanged: true,
       inputsChanged: false,
     });
@@ -378,7 +387,7 @@ describe("cellFreshness", () => {
     (status) => {
       const reader = record({
         id: "reader-r2",
-        cell_id: "k7f2",
+        cell_id: FIXTURE_CELL,
         runtime_id: "r2",
         code_fingerprint: K7F2_FINGERPRINT,
         state: {
@@ -389,7 +398,7 @@ describe("cellFreshness", () => {
       });
       const binder = record({
         id: "binder-r3",
-        cell_id: "c3",
+        cell_id: C3,
         runtime_id: "r3",
         code_fingerprint: C3_FINGERPRINT,
         state:
@@ -410,7 +419,7 @@ describe("cellFreshness", () => {
         results: [e12, reader],
       });
 
-      expect(freshnessOf(state)("k7f2")).toEqual({
+      expect(freshnessOf(state)(FIXTURE_CELL)).toEqual({
         sourceChanged: false,
         inputsChanged: true,
       });
@@ -420,7 +429,7 @@ describe("cellFreshness", () => {
   it("treats a name bound only by an earlier runtime as unbound", () => {
     const reader = record({
       id: "e20",
-      cell_id: "k7f2",
+      cell_id: FIXTURE_CELL,
       runtime_id: "r2",
       code_fingerprint: K7F2_FINGERPRINT,
       state: completed({ x: null }),
@@ -429,14 +438,14 @@ describe("cellFreshness", () => {
       cells: [c3, k7f2],
       executions: [execution(e12, [variable("x", "e12")]), execution(reader)],
     });
-    expect(freshnessOf(retained)("k7f2")).toEqual({
+    expect(freshnessOf(retained)(FIXTURE_CELL)).toEqual({
       sourceChanged: false,
       inputsChanged: false,
     });
 
     const rebound = record({
       id: "e14",
-      cell_id: "c3",
+      cell_id: C3,
       runtime_id: "r2",
       code_fingerprint: C3_FINGERPRINT,
     });
@@ -447,7 +456,7 @@ describe("cellFreshness", () => {
         execution(reader),
       ],
     });
-    expect(freshnessOf(bound)("k7f2")).toEqual({
+    expect(freshnessOf(bound)(FIXTURE_CELL)).toEqual({
       sourceChanged: false,
       inputsChanged: true,
     });
@@ -458,7 +467,7 @@ describe("cellFreshness", () => {
     (status) => {
       const pending = record({
         id: "e14",
-        cell_id: "c3",
+        cell_id: C3,
         code_fingerprint: "ffff000011112222",
         state: status === "running" ? { status, started_at: T0 } : { status },
       });
@@ -468,7 +477,7 @@ describe("cellFreshness", () => {
         results: [e12],
       });
 
-      expect(freshnessOf(state)("c3")).toEqual({
+      expect(freshnessOf(state)(C3)).toEqual({
         sourceChanged: true,
         inputsChanged: false,
       });
@@ -479,7 +488,7 @@ describe("cellFreshness", () => {
     const edited = cell("c3", "ffff000011112222");
     const running = record({
       id: "e14",
-      cell_id: "c3",
+      cell_id: C3,
       code_fingerprint: "ffff000011112222",
       state: { status: "running", started_at: T0 },
     });
@@ -488,7 +497,7 @@ describe("cellFreshness", () => {
       executions: [execution(running), execution(e13)],
       results: [e12, e13],
     });
-    expect(freshnessOf(covered)("c3").sourceChanged).toBe(false);
+    expect(freshnessOf(covered)(C3).sourceChanged).toBe(false);
 
     const stale = inputs({
       cells: [edited, k7f2],
@@ -498,6 +507,6 @@ describe("cellFreshness", () => {
       ],
       results: [e12, e13],
     });
-    expect(freshnessOf(stale)("c3").sourceChanged).toBe(true);
+    expect(freshnessOf(stale)(C3).sourceChanged).toBe(true);
   });
 });

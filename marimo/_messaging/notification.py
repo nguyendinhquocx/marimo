@@ -720,11 +720,14 @@ class VariableValuesNotification(Notification, tag="variable-values"):
     Attributes:
         variables: Variables with current values and types.
         removed: Bindings that no longer exist, identified by their producer.
+        exempt_cell: The cell these updates do not outdate. It is the cell
+            whose own code made them, when it does not run again for them.
     """
 
     name: ClassVar[str] = "variable-values"
     variables: list[VariableValue]
     removed: list[VariableRemoval] = msgspec.field(default_factory=list)
+    exempt_cell: CellId_t | None = None
 
 
 class DatasetsNotification(Notification, tag="datasets"):
@@ -1114,17 +1117,6 @@ class SecretKeysResultNotification(Notification, tag="secret-keys-result"):
     secrets: list[SecretKeysWithProvider]
 
 
-class CacheClearedNotification(Notification, tag="cache-cleared"):
-    """Execution cache cleared result.
-
-    Attributes:
-        bytes_freed: Bytes freed by clearing cache.
-    """
-
-    name: ClassVar[str] = "cache-cleared"
-    bytes_freed: int
-
-
 class CacheInfoNotification(Notification, tag="cache-info"):
     """Execution cache statistics.
 
@@ -1147,11 +1139,7 @@ class CacheInfoNotification(Notification, tag="cache-info"):
 class NotebookDocumentTransactionNotification(
     Notification, tag="notebook-document-transaction"
 ):
-    """Broadcasts an applied transaction to the frontend.
-
-    Sent by the session when the document changes (from any source).
-    The frontend applies the ops to update its local state.
-    """
+    """Carry a document transaction between the kernel and its session."""
 
     name: ClassVar[str] = "notebook-document-transaction"
     transaction: Transaction
@@ -1164,7 +1152,6 @@ EditorNotification = (
     | RemoveUIElementsNotification
     # Notebook lifecycle
     | ReloadNotification
-    | InterruptedNotification
     | CompletedRunNotification
     | KernelReadyNotification
     # Editor
@@ -1178,9 +1165,6 @@ EditorNotification = (
     | StartupLogsNotification
     | StartupProgressNotification
     | KernelStartupErrorNotification
-    # Variables
-    | VariablesNotification
-    | VariableValuesNotification
     # Query params
     | QueryParamsSetNotification
     | QueryParamsAppendNotification
@@ -1202,7 +1186,6 @@ EditorNotification = (
     # Secrets
     | SecretKeysResultNotification
     # Cache
-    | CacheClearedNotification
     | CacheInfoNotification
     # Kiosk
     | FocusCellNotification
@@ -1213,12 +1196,16 @@ EditorNotification = (
     | PdbInputNotification
     | BreakpointsNotification
     | ActiveLineNotification
-    # Document
-    | NotebookDocumentTransactionNotification
     # Consumer
     | ConsumerCapabilitiesNotification
 )
 
 NotificationMessage = (
-    EditorNotification | CellNotification | ExecutionNotification
+    EditorNotification
+    | CellNotification
+    | ExecutionNotification
+    | InterruptedNotification
+    | VariablesNotification
+    | VariableValuesNotification
+    | NotebookDocumentTransactionNotification
 )

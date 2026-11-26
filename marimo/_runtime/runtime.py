@@ -14,6 +14,7 @@ import threading
 import time
 import traceback
 from copy import copy, deepcopy
+from functools import cached_property
 from multiprocessing import connection
 from typing import (
     TYPE_CHECKING,
@@ -143,6 +144,7 @@ from marimo._runtime.context.kernel_context import (
 from marimo._runtime.context.utils import get_mode
 from marimo._runtime.control_flow import MarimoInterrupt
 from marimo._runtime.execution import ExecutionAttempt
+from marimo._runtime.executor import Executor, resolve_executor
 from marimo._runtime.input_override import getpass_override
 from marimo._runtime.kernel_request_handlers import KernelRequestHandlers
 from marimo._runtime.packages.module_registry import ModuleRegistry
@@ -481,6 +483,13 @@ class StartupCellCache:
         cached = self._entries.pop(cell_id, None)
         if cached is not None and cached[0] == code and not carried_imports:
             return cached[1], cached[2]
+        return None
+
+    def peek(self, cell_id: CellId_t, code: str) -> CellImpl | None:
+        """The compiled cell for this source, left in the cache."""
+        cached = self._entries.get(cell_id)
+        if cached is not None and cached[0] == code:
+            return cached[1]
         return None
 
     def invalidate(self, cell_id: CellId_t, code: str | None = None) -> None:
@@ -1259,9 +1268,6 @@ class Kernel:
         cell = self.graph.cells[cell_id]
         cell.import_workspace.imported_defs = set()
         cell.import_workspace.carried_values.clear()
-        missing_modules_before_deletion = (
-            self.module_registry.missing_modules()
-        )
 
         temporaries = {
             name: [VariableData(kind="variable")] for name in cell.temporaries
@@ -1270,14 +1276,6 @@ class Kernel:
             {**cell.variable_data, **temporaries},
             exclude_defs if exclude_defs is not None else set(),
         )
-
-        missing_modules_after_deletion = (
-            missing_modules_before_deletion & self.module_registry.modules()
-        )
-        if missing_modules_after_deletion != missing_modules_before_deletion:
-            self.packages_callbacks.send_missing_packages_alert(
-                missing_modules_after_deletion
-            )
 
         cell.set_output(None)
         get_context().cell_lifecycle_registry.dispose(
@@ -1373,6 +1371,10 @@ class Kernel:
         # Cells that were unable to be added to the graph due to syntax errors
         syntax_errors: dict[CellId_t, Error] = {}
 
+        missing_modules_before_mutation = (
+            self.module_registry.missing_modules()
+        )
+
         # Register and delete cells
         for er in execution_requests:
             # Edit-only batches must also retire source that a later run
@@ -1405,6 +1407,20 @@ class Kernel:
                 dr.cell_id
             )
         cells_in_graph = set(self.graph.cells.keys())
+
+        # Removing or replacing a cell can shrink the set of missing packages.
+        if missing_modules_before_mutation:
+            missing_modules_after_mutation = (
+                missing_modules_before_mutation
+                & self.module_registry.modules()
+            )
+            if (
+                missing_modules_after_mutation
+                != missing_modules_before_mutation
+            ):
+                self.packages_callbacks.send_missing_packages_alert(
+                    missing_modules_after_mutation
+                )
 
         # Check for semantic errors, like multiple definition errors, cycle
         # errors, and delete nonlocal errors.
@@ -1530,8 +1546,7 @@ class Kernel:
                 )
             execution.finish()
 
-        # Always broadcast Variables message after graph mutation to ensure
-        # frontend has the latest dependency information
+        # The session uses kernel declarations to prune its runtime resources.
         if not get_context().is_embedded():
             broadcast_notification(
                 VariablesNotification(
@@ -1764,7 +1779,7 @@ class Kernel:
             )
 
     def _publish_bindings(
-        self, names: Iterable[str]
+        self, names: Iterable[str], exempt_cell: CellId_t | None = None
     ) -> dict[str, tuple[object, Binding | None]]:
         # Called under _state_lock: readers must not see an unpublished revision.
         previews = {
@@ -1784,7 +1799,10 @@ class Kernel:
         ]
         if values:
             broadcast_notification(
-                VariableValuesNotification(variables=values), self.stream
+                VariableValuesNotification(
+                    variables=values, exempt_cell=exempt_cell
+                ),
+                self.stream,
             )
         return previews
 
@@ -1816,7 +1834,15 @@ class Kernel:
                     VariableValuesNotification(variables=current), self.stream
                 )
 
-    def _update_variables(self, names: Iterable[str]) -> None:
+    def _update_variables(
+        self, names: Iterable[str], exempt_cell: CellId_t | None = None
+    ) -> None:
+        """Advance the revision of each name's value.
+
+        An update outdates every result that read the value. `exempt_cell`
+        names the one cell it must not outdate, which is the cell whose own
+        code made the update when the runtime will not run it again for it.
+        """
         if get_context().is_embedded() or get_mode() != "edit":
             return
         with self._state_lock:
@@ -1834,11 +1860,17 @@ class Kernel:
                     binding, revision=revision
                 )
                 revisions[name] = revision
-            previews = self._publish_bindings(revisions)
+            previews = self._publish_bindings(revisions, exempt_cell)
             current = EXECUTION_CTX.get()
-            if current is not None and current.attempt is not None:
-                current.attempt.advance_inputs(revisions)
+            attempt = current.attempt if current is not None else None
+            if exempt_cell is not None and attempt is not None:
+                attempt.advance_inputs(revisions)
         self._publish_variable_previews(previews)
+
+    @cached_property
+    def _executor(self) -> Executor:
+        # Plugin discovery scans installed distributions; scope it to the kernel.
+        return resolve_executor()
 
     def _propagate_kernel_errors(
         self,
@@ -1914,6 +1946,7 @@ class Kernel:
             executions=self._planned,
             plan_execution=self._plan_execution,
             user_config=self.user_config,
+            executor=self._executor,
         )
 
         # I/O
@@ -1941,8 +1974,18 @@ class Kernel:
         from marimo._runtime.threads import is_marimo_thread
 
         ctx = get_context()
+        execution = ctx.execution_context
+        # A setter does not rerun the cell that called it unless the state
+        # allows self-loops, so that cell's result must not read as outdated.
         self._update_variables(
-            name for name in self._bindings if self.globals.get(name) is state
+            (
+                name
+                for name in self._bindings
+                if self.globals.get(name) is state
+            ),
+            exempt_cell=execution.cell_id
+            if execution is not None and not state.allow_self_loops
+            else None,
         )
         if ctx.execution_context is not None:
             setter_cell_id = ctx.execution_context.cell_id
@@ -2135,11 +2178,21 @@ class Kernel:
                 continue
             cell = self.graph.cells.get(request.cell_id)
             if cell is None or cell.code != request.code:
+                # Pending cells stay pending across many runs: compile each
+                # once, not once per run request.
+                cell = self._startup_cell_cache.peek(
+                    request.cell_id, request.code
+                )
+            if cell is None:
                 try:
                     cell = compile_cell(request.code, cell_id=request.cell_id)
                 except Exception:  # noqa: S112
                     # Graph mutation reports compilation failures.
                     continue
+                if request.cell_id in self._pending_execution_requests:
+                    self._startup_cell_cache.store(
+                        request.cell_id, request.code, cell, None
+                    )
             cells[request.cell_id] = cell
         roots = requested_ids if run_cell_ids is None else run_cell_ids
         ancestors = dataflow.get_ancestors_from_cells(cells, roots)
@@ -2347,6 +2400,7 @@ class Kernel:
             get_inputs=self._read_inputs,
             executions={SCRATCH_CELL_ID: execution},
             user_config=self.user_config,
+            executor=self._executor,
         )
 
         await runner.run_all()

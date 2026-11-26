@@ -410,20 +410,6 @@ components:
       - breakpoints
       title: BreakpointsNotification
       type: object
-    CacheClearedNotification:
-      description: "Execution cache cleared result.\n\nAttributes:\n    bytes_freed:\
-        \ Bytes freed by clearing cache."
-      properties:
-        bytes_freed:
-          type: integer
-        op:
-          enum:
-          - cache-cleared
-      required:
-      - op
-      - bytes_freed
-      title: CacheClearedNotification
-      type: object
     CacheConfig:
       description: Configuration for caching.
       properties:
@@ -1093,38 +1079,6 @@ components:
       - destination
       title: CopyNotebookRequest
       type: object
-    CreateCell:
-      description: Insert a new cell into the notebook.
-      properties:
-        after:
-          anyOf:
-          - $ref: '#/components/schemas/CellId'
-          - type: 'null'
-          default: null
-        before:
-          anyOf:
-          - $ref: '#/components/schemas/CellId'
-          - type: 'null'
-          default: null
-        cellId:
-          $ref: '#/components/schemas/CellId'
-        code:
-          type: string
-        config:
-          $ref: '#/components/schemas/CellConfig'
-        name:
-          type: string
-        type:
-          enum:
-          - create-cell
-      required:
-      - type
-      - cellId
-      - code
-      - name
-      - config
-      title: CreateCell
-      type: object
     CreateSecretRequest:
       properties:
         key:
@@ -1496,19 +1450,6 @@ components:
       required:
       - cellId
       title: DebugCellRequest
-      type: object
-    DeleteCell:
-      description: Remove a cell from the notebook.
-      properties:
-        cellId:
-          $ref: '#/components/schemas/CellId'
-        type:
-          enum:
-          - delete-cell
-      required:
-      - type
-      - cellId
-      title: DeleteCell
       type: object
     DeleteCellCommand:
       description: "Delete a cell from the notebook.\n\nRemoves cell from the dependency\
@@ -2998,20 +2939,6 @@ components:
       - versions
       title: InstallPackagesRequest
       type: object
-    InterruptedNotification:
-      description: Kernel was interrupted by user (SIGINT/Ctrl+C).
-      properties:
-        op:
-          enum:
-          - interrupted
-        run_id:
-          anyOf:
-          - type: string
-          - type: 'null'
-      required:
-      - op
-      title: InterruptedNotification
-      type: object
     InvokeAiToolRequest:
       properties:
         arguments:
@@ -4280,29 +4207,6 @@ components:
       - bufferPaths
       title: ModelUpdateMessage
       type: object
-    MoveCell:
-      description: Reposition a cell in the notebook.
-      properties:
-        after:
-          anyOf:
-          - $ref: '#/components/schemas/CellId'
-          - type: 'null'
-          default: null
-        before:
-          anyOf:
-          - $ref: '#/components/schemas/CellId'
-          - type: 'null'
-          default: null
-        cellId:
-          $ref: '#/components/schemas/CellId'
-        type:
-          enum:
-          - move-cell
-      required:
-      - type
-      - cellId
-      title: MoveCell
-      type: object
     MultipleDefinitionError:
       properties:
         cells:
@@ -4343,24 +4247,6 @@ components:
       - config
       title: NotebookCell
       type: object
-    NotebookDocumentTransactionNotification:
-      description: 'Broadcasts an applied transaction to the frontend.
-
-
-        Sent by the session when the document changes (from any source).
-
-        The frontend applies the ops to update its local state.'
-      properties:
-        op:
-          enum:
-          - notebook-document-transaction
-        transaction:
-          $ref: '#/components/schemas/Transaction'
-      required:
-      - op
-      - transaction
-      title: NotebookDocumentTransactionNotification
-      type: object
     NotificationMessage:
       anyOf:
       - $ref: '#/components/schemas/FunctionCallResultNotification'
@@ -4368,7 +4254,6 @@ components:
       - $ref: '#/components/schemas/ModelLifecycleNotification'
       - $ref: '#/components/schemas/RemoveUIElementsNotification'
       - $ref: '#/components/schemas/ReloadNotification'
-      - $ref: '#/components/schemas/InterruptedNotification'
       - $ref: '#/components/schemas/CompletedRunNotification'
       - $ref: '#/components/schemas/KernelReadyNotification'
       - $ref: '#/components/schemas/CompletionResultNotification'
@@ -4380,8 +4265,6 @@ components:
       - $ref: '#/components/schemas/StartupLogsNotification'
       - $ref: '#/components/schemas/StartupProgressNotification'
       - $ref: '#/components/schemas/KernelStartupErrorNotification'
-      - $ref: '#/components/schemas/VariablesNotification'
-      - $ref: '#/components/schemas/VariableValuesNotification'
       - $ref: '#/components/schemas/QueryParamsSetNotification'
       - $ref: '#/components/schemas/QueryParamsAppendNotification'
       - $ref: '#/components/schemas/QueryParamsDeleteNotification'
@@ -4398,7 +4281,6 @@ components:
       - $ref: '#/components/schemas/StorageEntriesNotification'
       - $ref: '#/components/schemas/StorageDownloadReadyNotification'
       - $ref: '#/components/schemas/SecretKeysResultNotification'
-      - $ref: '#/components/schemas/CacheClearedNotification'
       - $ref: '#/components/schemas/CacheInfoNotification'
       - $ref: '#/components/schemas/FocusCellNotification'
       - $ref: '#/components/schemas/CallbackOutputNotification'
@@ -4407,7 +4289,6 @@ components:
       - $ref: '#/components/schemas/PdbInputNotification'
       - $ref: '#/components/schemas/BreakpointsNotification'
       - $ref: '#/components/schemas/ActiveLineNotification'
-      - $ref: '#/components/schemas/NotebookDocumentTransactionNotification'
       - $ref: '#/components/schemas/ConsumerCapabilitiesNotification'
       discriminator:
         mapping:
@@ -4415,7 +4296,6 @@ components:
           alert: '#/components/schemas/AlertNotification'
           banner: '#/components/schemas/BannerNotification'
           breakpoints: '#/components/schemas/BreakpointsNotification'
-          cache-cleared: '#/components/schemas/CacheClearedNotification'
           cache-info: '#/components/schemas/CacheInfoNotification'
           callback-output: '#/components/schemas/CallbackOutputNotification'
           completed-run: '#/components/schemas/CompletedRunNotification'
@@ -4430,12 +4310,10 @@ components:
           environment-state: '#/components/schemas/EnvironmentStateNotification'
           focus-cell: '#/components/schemas/FocusCellNotification'
           function-call-result: '#/components/schemas/FunctionCallResultNotification'
-          interrupted: '#/components/schemas/InterruptedNotification'
           kernel-ready: '#/components/schemas/KernelReadyNotification'
           kernel-startup-error: '#/components/schemas/KernelStartupErrorNotification'
           missing-package-alert: '#/components/schemas/MissingPackageAlertNotification'
           model-lifecycle: '#/components/schemas/ModelLifecycleNotification'
-          notebook-document-transaction: '#/components/schemas/NotebookDocumentTransactionNotification'
           pdb-input: '#/components/schemas/PdbInputNotification'
           pdb-output: '#/components/schemas/PdbOutputNotification'
           query-params-append: '#/components/schemas/QueryParamsAppendNotification'
@@ -4455,8 +4333,6 @@ components:
           storage-entries: '#/components/schemas/StorageEntriesNotification'
           storage-namespaces: '#/components/schemas/StorageNamespacesNotification'
           validate-sql-result: '#/components/schemas/ValidateSQLResultNotification'
-          variable-values: '#/components/schemas/VariableValuesNotification'
-          variables: '#/components/schemas/VariablesNotification'
         propertyName: op
     OpenAiConfig:
       description: Configuration options for OpenAI or OpenAI-compatible services.
@@ -5053,45 +4929,9 @@ components:
       - filename
       title: RenameNotebookRequest
       type: object
-    ReorderCells:
-      description: 'Replace the full cell ordering.
-
-
-        Cell IDs present in the document but missing from `cell_ids`
-
-        are appended at the end. IDs not in the document are ignored.'
-      properties:
-        cellIds:
-          items:
-            $ref: '#/components/schemas/CellId'
-          type: array
-        type:
-          enum:
-          - reorder-cells
-      required:
-      - type
-      - cellIds
-      title: ReorderCells
-      type: object
     RequestId:
       format: request-id
       type: string
-    Revision:
-      properties:
-        execution_id:
-          description: Identifies an execution. Unique within the host.
-          minLength: 1
-          type: string
-        update:
-          description: How many times the value has been updated since it was produced.
-            Zero at binding.
-          minimum: 0
-          type: integer
-      required:
-      - execution_id
-      - update
-      title: Revision
-      type: object
     RunningNotebooksResponse:
       properties:
         files:
@@ -5754,65 +5594,6 @@ components:
       - breakpoints
       title: SetBreakpointsRequest
       type: object
-    SetCode:
-      description: Replace a cell's source code.
-      properties:
-        cellId:
-          $ref: '#/components/schemas/CellId'
-        code:
-          type: string
-        type:
-          enum:
-          - set-code
-      required:
-      - type
-      - cellId
-      - code
-      title: SetCode
-      type: object
-    SetConfig:
-      description: Replace a cell's config.
-      properties:
-        cellId:
-          $ref: '#/components/schemas/CellId'
-        column:
-          anyOf:
-          - type: integer
-          - type: 'null'
-        disabled:
-          type: boolean
-        expandOutput:
-          type: boolean
-        hideCode:
-          type: boolean
-        type:
-          enum:
-          - set-config
-      required:
-      - type
-      - cellId
-      - column
-      - disabled
-      - hideCode
-      - expandOutput
-      title: SetConfig
-      type: object
-    SetName:
-      description: Rename a cell.
-      properties:
-        cellId:
-          $ref: '#/components/schemas/CellId'
-        name:
-          type: string
-        type:
-          enum:
-          - set-name
-      required:
-      - type
-      - cellId
-      - name
-      title: SetName
-      type: object
     SetupRootError:
       properties:
         edges_with_vars:
@@ -6350,55 +6131,6 @@ components:
       - mode
       title: ToolDefinition
       type: object
-    Transaction:
-      description: 'An atomic batch of changes applied to a NotebookDocument.
-
-
-        `source` identifies the writer (e.g. `"frontend"`, `"kernel"`).
-
-        `version` is `None` when created and stamped by
-
-        `NotebookDocument.apply()`.'
-      properties:
-        changes:
-          items:
-            anyOf:
-            - $ref: '#/components/schemas/CreateCell'
-            - $ref: '#/components/schemas/DeleteCell'
-            - $ref: '#/components/schemas/MoveCell'
-            - $ref: '#/components/schemas/ReorderCells'
-            - $ref: '#/components/schemas/SetCode'
-            - $ref: '#/components/schemas/SetName'
-            - $ref: '#/components/schemas/SetConfig'
-            discriminator:
-              mapping:
-                create-cell: '#/components/schemas/CreateCell'
-                delete-cell: '#/components/schemas/DeleteCell'
-                move-cell: '#/components/schemas/MoveCell'
-                reorder-cells: '#/components/schemas/ReorderCells'
-                set-code: '#/components/schemas/SetCode'
-                set-config: '#/components/schemas/SetConfig'
-                set-name: '#/components/schemas/SetName'
-              propertyName: type
-          type: array
-        source:
-          enum:
-          - cell-manager
-          - code-mode
-          - file-watch
-          - frontend
-          - host
-          - kernel
-        version:
-          anyOf:
-          - type: integer
-          - type: 'null'
-          default: null
-      required:
-      - changes
-      - source
-      title: Transaction
-      type: object
     TyLanguageServerConfig:
       description: 'Configuration options for Ty Language Server.
 
@@ -6705,111 +6437,9 @@ components:
       - previewValue
       title: VariableContext
       type: object
-    VariableDeclarationNotification:
-      description: "Variable declaration and usage for dataflow graph.\n\nAttributes:\n\
-        \    name: Variable name.\n    declared_by: Cell IDs that define this variable.\n\
-        \    used_by: Cell IDs that use this variable."
-      properties:
-        declared_by:
-          items:
-            $ref: '#/components/schemas/CellId'
-          type: array
-        name:
-          $ref: '#/components/schemas/VariableName'
-        used_by:
-          items:
-            $ref: '#/components/schemas/CellId'
-          type: array
-      required:
-      - name
-      - declared_by
-      - used_by
-      title: VariableDeclarationNotification
-      type: object
     VariableName:
       format: variable-name
       type: string
-    VariableRemoval:
-      description: A binding removed from the runtime's namespace.
-      properties:
-        execution_id:
-          type: string
-        name:
-          type: string
-      required:
-      - name
-      - execution_id
-      title: VariableRemoval
-      type: object
-    VariableValue:
-      description: "Variable value and type for variables panel.\n\nAttributes:\n\
-        \    name: Variable name.\n    value: String representation of value.\n  \
-        \  datatype: Data type as string."
-      properties:
-        datatype:
-          anyOf:
-          - type: string
-          - type: 'null'
-        execution_id:
-          anyOf:
-          - type: string
-          - type: 'null'
-          default: null
-        name:
-          type: string
-        revision:
-          anyOf:
-          - $ref: '#/components/schemas/Revision'
-          - type: 'null'
-          default: null
-        value:
-          anyOf:
-          - type: string
-          - type: 'null'
-      required:
-      - name
-      - value
-      - datatype
-      title: VariableValue
-      type: object
-    VariableValuesNotification:
-      description: "Current variable values.\n\nAttributes:\n    variables: Variables\
-        \ with current values and types.\n    removed: Bindings that no longer exist,\
-        \ identified by their producer."
-      properties:
-        op:
-          enum:
-          - variable-values
-        removed:
-          default: []
-          items:
-            $ref: '#/components/schemas/VariableRemoval'
-          type: array
-        variables:
-          items:
-            $ref: '#/components/schemas/VariableValue'
-          type: array
-      required:
-      - op
-      - variables
-      title: VariableValuesNotification
-      type: object
-    VariablesNotification:
-      description: "Variable dataflow graph.\n\nAttributes:\n    variables: Variable\
-        \ declarations and usage."
-      properties:
-        op:
-          enum:
-          - variables
-        variables:
-          items:
-            $ref: '#/components/schemas/VariableDeclarationNotification'
-          type: array
-      required:
-      - op
-      - variables
-      title: VariablesNotification
-      type: object
     VenvConfig:
       description: 'Configuration for an external Python environment in edit mode.
 

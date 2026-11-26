@@ -73,8 +73,7 @@ import {
   ListStorageEntries,
 } from "../storage/request-registry";
 import { useStorageActions } from "../storage/state";
-import { useVariablesActions } from "../variables/state";
-import type { VariableName } from "../variables/types";
+import { variableBindingsAtom } from "../variables/state";
 import {
   activeDocumentModelAtom,
   confirmedDocumentAtom,
@@ -99,10 +98,9 @@ export function useNotebookSession(opts: { sessionId: SessionId }) {
   const { reconcileStagedCells } = useStagedAICellsActions();
   const { addExecution } = useRunsActions();
   const setInitialRunCompleted = useSetAtom(initialRunCompletedAtom);
-  const { setVariables, setMetadata } = useVariablesActions();
-  const { addColumnPreview } = useDatasetsActions();
-  const { addDatasets, filterDatasetsFromVariables } = useDatasetsActions();
-  const { addDataSourceConnection, filterDataSourcesFromVariables } =
+  const { addColumnPreview, addDatasets, removeDatasetsForVariables } =
+    useDatasetsActions();
+  const { addDataSourceConnection, removeConnectionsForVariables } =
     useDataSourceActions();
   const { setLayoutData } = useLayoutActions();
   const [connection, setConnection] = useAtom(connectionAtom);
@@ -121,10 +119,8 @@ export function useNotebookSession(opts: { sessionId: SessionId }) {
   const transportType = useAtomValue(connectionTransportTypeAtom);
   const setCacheInfo = useSetAtom(cacheInfoAtom);
   const setKernelStartupError = useSetAtom(kernelStartupErrorAtom);
-  const {
-    setNamespaces: setStorageNamespaces,
-    filterFromVariables: filterStorageFromVariables,
-  } = useStorageActions();
+  const { setNamespaces: setStorageNamespaces, removeNamespacesForVariables } =
+    useStorageActions();
 
   const handleNotification = (msg: NotificationPayload) => {
     switch (msg.data.op) {
@@ -180,8 +176,6 @@ export function useNotebookSession(opts: { sessionId: SessionId }) {
       case "completed-run":
         setInitialRunCompleted(true);
         return;
-      case "interrupted":
-        return;
 
       case "kernel-startup-error":
         // Full error received via message before websocket close
@@ -228,33 +222,6 @@ export function useNotebookSession(opts: { sessionId: SessionId }) {
         return;
       case "pdb-output":
         showCommandOutput(msg.data);
-        return;
-      case "variables":
-        const variableNames = msg.data.variables.map((v) => v.name);
-        setVariables(
-          msg.data.variables.map((v) => ({
-            name: v.name,
-            declaredBy: v.declared_by,
-            usedBy: v.used_by,
-          })),
-        );
-        filterDatasetsFromVariables(variableNames);
-        filterDataSourcesFromVariables(variableNames);
-        filterStorageFromVariables(variableNames);
-        return;
-      case "variable-values":
-        setMetadata([
-          ...(msg.data.removed ?? []).map((v) => ({
-            name: v.name as VariableName,
-            dataType: undefined,
-            value: undefined,
-          })),
-          ...msg.data.variables.map((v) => ({
-            name: v.name as VariableName,
-            dataType: v.datatype,
-            value: v.value,
-          })),
-        ]);
         return;
       case "alert":
         toast({
@@ -338,9 +305,6 @@ export function useNotebookSession(opts: { sessionId: SessionId }) {
       case "cache-info":
         setCacheInfo(msg.data);
         return;
-      case "cache-cleared":
-        // Cache cleared, could refresh cache info if needed
-        return;
       case "data-source-connections":
         addDataSourceConnection({
           connections: msg.data.connections.map((conn) => ({
@@ -378,9 +342,6 @@ export function useNotebookSession(opts: { sessionId: SessionId }) {
             ? null
             : { cellId: msg.data.cell_id, line: msg.data.line },
         );
-        return;
-      case "notebook-document-transaction":
-        // Edits reach the notebook through the host document.
         return;
       case "consumer-capabilities":
         setKioskMode(!msg.data.consumer_capabilities.edit);
@@ -420,7 +381,7 @@ export function useNotebookSession(opts: { sessionId: SessionId }) {
     },
     checkHealth: () => runtimeManager.reconcileFromHealth(),
     onExecution: (record) => {
-      const cellId = (record.cell_id ?? SCRATCH_CELL_ID) as CellId;
+      const cellId = record.cell_id ?? SCRATCH_CELL_ID;
       const time = completedAt(record) ?? startedAt(record);
       const timestamp =
         time === null ? Date.now() / 1000 : Date.parse(time) / 1000;
@@ -454,6 +415,37 @@ export function useNotebookSession(opts: { sessionId: SessionId }) {
       }
     },
   });
+
+  // Discovery can precede a binding. Remove only resources whose binding disappeared.
+  useLayoutEffect(() => {
+    let previous = store.get(variableBindingsAtom);
+    return store.sub(variableBindingsAtom, () => {
+      const current = store.get(variableBindingsAtom);
+      const removed = new Set<string>();
+      for (const [cellId, bindings] of previous ?? []) {
+        const next = current?.get(cellId);
+        if (bindings === next) {
+          continue;
+        }
+        for (const [id, binding] of bindings) {
+          if (!next?.has(id)) {
+            removed.add(binding.name);
+          }
+        }
+      }
+      previous = current;
+      if (removed.size > 0) {
+        removeDatasetsForVariables(removed);
+        removeConnectionsForVariables(removed);
+        removeNamespacesForVariables(removed);
+      }
+    });
+  }, [
+    store,
+    removeDatasetsForVariables,
+    removeConnectionsForVariables,
+    removeNamespacesForVariables,
+  ]);
 
   const documentModel = useMemo(
     () =>

@@ -263,10 +263,10 @@ importers:
         version: 3.2.2(react@19.3.1)
       '@glideapps/glide-data-grid':
         specifier: 6.0.4-alpha24
-        version: 6.0.4-alpha24(lodash@4.17.21)(marked@15.0.12)(react-dom@19.3.1(react@19.3.1))(react-responsive-carousel@3.2.23)(react@19.3.1)(supports-color@10.0.0)
+        version: 6.0.4-alpha24(lodash@4.18.1)(marked@15.0.12)(react-dom@19.3.1(react@19.3.1))(react-responsive-carousel@3.2.23)(react@19.3.1)(supports-color@10.0.0)
       '@glideapps/glide-data-grid-cells':
         specifier: 6.0.4-alpha24
-        version: 6.0.4-alpha24(@types/react@19.3.0)(lodash@4.17.21)(marked@15.0.12)(react-dom@19.3.1(react@19.3.1))(react-responsive-carousel@3.2.23)(react@19.3.1)(supports-color@10.0.0)
+        version: 6.0.4-alpha24(@types/react@19.3.0)(lodash@4.18.1)(marked@15.0.12)(react-dom@19.3.1(react@19.3.1))(react-responsive-carousel@3.2.23)(react@19.3.1)(supports-color@10.0.0)
       '@hookform/resolvers':
         specifier: ^5.9.2
         version: 5.9.2(@standard-schema/spec@1.1.0)(ajv-formats@2.1.1(ajv@8.20.0))(ajv@8.20.0)(react-hook-form@7.54.2(react@19.3.1))(zod@4.6.7)
@@ -298,14 +298,14 @@ importers:
         specifier: ^0.3.10
         version: 0.3.10(@codemirror/state@6.7.6)(@codemirror/view@6.43.13)
       '@marimo-team/codemirror-languageserver':
-        specifier: ^2.0.1
-        version: 2.0.1(@codemirror/autocomplete@6.20.3)(@codemirror/lint@6.9.7)(@codemirror/state@6.7.6)(@codemirror/view@6.43.13)
+        specifier: ^2.0.2
+        version: 2.0.2(@codemirror/autocomplete@6.20.3)(@codemirror/lint@6.9.7)(@codemirror/state@6.7.6)(@codemirror/view@6.43.13)
       '@marimo-team/codemirror-mcp':
         specifier: ^0.1.7
         version: 0.1.7(@codemirror/autocomplete@6.20.3)(@codemirror/state@6.7.6)(@codemirror/view@6.43.13)(@modelcontextprotocol/sdk@1.32.2(supports-color@10.0.0)(zod@4.6.7))
       '@marimo-team/codemirror-sql':
-        specifier: ^0.3.1
-        version: 0.3.1(@codemirror/autocomplete@6.20.3)(@codemirror/lint@6.9.7)(@codemirror/state@6.7.6)(@codemirror/view@6.43.13)
+        specifier: ^0.3.2
+        version: 0.3.2(@codemirror/autocomplete@6.20.3)(@codemirror/lint@6.9.7)(@codemirror/state@6.7.6)(@codemirror/view@6.43.13)
       '@marimo-team/llm-info':
         specifier: workspace:*
         version: link:../packages/llm-info
@@ -817,6 +817,9 @@ importers:
 
   packages/openapi:
     dependencies:
+      '@marimo-team/client':
+        specifier: workspace:*
+        version: link:../client
       openapi-fetch:
         specifier: 0.9.7
         version: 0.9.7
@@ -2005,8 +2008,8 @@ packages:
       '@codemirror/state': ^6
       '@codemirror/view': ^6
 
-  '@marimo-team/codemirror-languageserver@2.0.1':
-    resolution: {integrity: sha512-MwT+AyUSHs2ChUBTIgtqc8lM2oKvt+S+kgGRFsN+KhnboPEi2fgpoF+3taBnzf7EjjlmizKZ9CjUFs9dV5zA4A==}
+  '@marimo-team/codemirror-languageserver@2.0.2':
+    resolution: {integrity: sha512-CQScLrw0LdoW7xCJGGzF+D2tHu9Hc05RxsnWQiH6+eXBfR6ySBlXxhw7K244LXTSHl45LlwsXBHVxeWKuZ8Qzw==}
     peerDependencies:
       '@codemirror/autocomplete': ^6
       '@codemirror/lint': ^6
@@ -2021,8 +2024,8 @@ packages:
       '@codemirror/view': ^6
       '@modelcontextprotocol/sdk': ^1
 
-  '@marimo-team/codemirror-sql@0.3.1':
-    resolution: {integrity: sha512-MOWoEGGzrLnwu9s1/tr1HOF7MRlMBFsFjr1tAFp6PPpCQGJ8r9Jwl6i02nX3nVqN1JAZDNE6neNwE2jDIoO5bw==}
+  '@marimo-team/codemirror-sql@0.3.2':
+    resolution: {integrity: sha512-RphF6/bFDm3+nSZ1q9GBtSftTsC2cHXZoVM8nqZnLa6iDAjKmjvxFSykMfHpmpDlXvQIPVpQy6LyhsREcLearw==}
     peerDependencies:
       '@codemirror/autocomplete': ^6
       '@codemirror/lint': ^6
@@ -5839,8 +5842,8 @@ packages:
   devlop@1.1.0:
     resolution: {integrity: sha512-RWmIqhcFf1lRYBvNmr7qTNuyCt/7/ns2jbpp1+PalgE/rDQcBT0fioSMUpJ93irlUhC5hrg4cYqe6U+0ImW0rA==}
 
-  diff@8.0.2:
-    resolution: {integrity: sha512-sSuxWU5j5SR9QQji/o2qMvqRNYRDOcBTgsJ/DeCf4iSN4gW+gNMXM7wFIP+fdXZxoNiAnHUTGjCr+TSWXdRDKg==}
+  diff@8.0.4:
+    resolution: {integrity: sha512-DPi0FmjiSU5EvQV0++GFDOJ9ASQUVFh5kD+OzOnYdi7n3Wpm9hWWGfB/O2blfHcMVTL5WkQXSnRiK9makhrcnw==}
     engines: {node: '>=0.3.1'}
 
   dir-glob@3.0.1:
@@ -6233,8 +6236,8 @@ packages:
   flat-cache@6.1.19:
     resolution: {integrity: sha512-l/K33newPTZMTGAnnzaiqSl6NnH7Namh8jBNjrgjprWxGmZUuxx/sJNIRaijOh3n7q7ESbhNZC+pvVZMFdeU4A==}
 
-  flatted@3.3.3:
-    resolution: {integrity: sha512-GX+ysw4PBCz0PzosHDepZGANEuFCMLrnRTiEy9McGjmkCQYwRq4A/X786G/fjM/+OjsWSU1ZrY5qyARZmO/uwg==}
+  flatted@3.4.4:
+    resolution: {integrity: sha512-5+ybhBZANEJxaH3X5evAFatUxLfEHSr7n6kYJ+1Qd0mUqr4eu9gIf6GDbWHf8RJijHrjjO8G+la14SlL2SeS1Q==}
 
   flatten-vertex-data@1.0.2:
     resolution: {integrity: sha512-BvCBFK2NZqerFTdMDgqfHBwxYWnxeCkwONsw6PvBMcUXqo8U/KDWwmXhqx1x2kLIg7DqIsJfOaJFOmlua3Lxuw==}
@@ -7180,8 +7183,8 @@ packages:
   lodash.uniq@4.5.0:
     resolution: {integrity: sha512-xfBaXQd9ryd9dlSDvnvI0lvxfLJlYAZzXomUYzLKtUeOQvOP5piqAWuGtrhWeqaXK9hhoM/iyJc5AV+XfsX3HQ==}
 
-  lodash@4.17.21:
-    resolution: {integrity: sha512-v2kDEe57lecTulaDIuNTPy3Ry4gLGJ6Z1O3vE1krgXZNrsQ+LFTGHVxVjcXPs17LhbZVGedAJv8XZ1tvj5FvSg==}
+  lodash@4.18.1:
+    resolution: {integrity: sha512-dMInicTPVE8d1e5otfwmmjlxkZoUpiVLwyeTdUsi/Caj/gfzzblBcCE5sRHV/AsjuCmxWrte2TNGSYuCeCq+0Q==}
 
   longest-streak@3.1.0:
     resolution: {integrity: sha512-9Ri+o0JYgehTaVBBDoMqIl8GXtbWg711O3srftcHhZ0dqnETqLaoIK0x17fUw9rFSlK/0NlsKe0Ahhyl5pXE2g==}
@@ -8187,8 +8190,8 @@ packages:
   prosemirror-view@1.42.6:
     resolution: {integrity: sha512-3g25f6hKV2bBxo3puH3EcYWmmVNSH0iWmNsMVT7sugDSpA025jgpOLarcDWr39SdzPjYMaiYtRdNtXialPSjEQ==}
 
-  protocol-buffers-schema@3.6.0:
-    resolution: {integrity: sha512-TdDRD+/QNdrCGCE7v8340QyuXd4kIWIgapsE2+n/SaGiSSbomYl4TjHlvIoCWRpE7wFt02EpB35VVA2ImcBVqw==}
+  protocol-buffers-schema@3.6.1:
+    resolution: {integrity: sha512-VG2K63Igkiv9p76tk1lilczEK1cT+kCjKtkdhw1dQZV3k3IXJbd3o6Ho8b9zJZaHSnT2hKe4I+ObmX9w6m5SmQ==}
 
   proxy-addr@2.0.8:
     resolution: {integrity: sha512-5nnx0yGyVUcY6t9RnWcARWtwT9F1D8O9rt08htPvnd49W1IgZtmLkhu9WfMzQj1cFxjHIO6connUNVW5k7AVyQ==}
@@ -8754,8 +8757,8 @@ packages:
     resolution: {integrity: sha512-7++dFhtcx3353uBaq8DDR4NuxBetBzC7ZQOhmTQInHEd6bSrXdiEyzCvG07Z44UYdLShWUyXt5M/yhz8ekcb1A==}
     engines: {node: '>=8'}
 
-  shell-quote@1.8.3:
-    resolution: {integrity: sha512-ObmnIF4hXNg1BqhnHmgbDETF8dLPCggZWBjkQfhZpbszZnYur5DUljTcCHii5LC3J5E0yeO/1LIMyH+UvHQgyw==}
+  shell-quote@1.12.0:
+    resolution: {integrity: sha512-PcByqNyT/38F2kDNi006HAMRJaULuBzq/FOsw3qdZvX/GA9W/jamDaRskgHjubHiftXK5sIFxLNkvrXUwcof6Q==}
     engines: {node: '>= 0.4'}
 
   side-channel-list@1.0.1:
@@ -8970,8 +8973,8 @@ packages:
   strongly-connected-components@1.0.1:
     resolution: {integrity: sha512-i0TFx4wPcO0FwX+4RkLJi1MxmcTv90jNZgxMu9XRnMXMeFUY1VJlIoXpZunPUvUUqbCT1pg5PEkFqqpcaElNaA==}
 
-  style-mod@4.1.3:
-    resolution: {integrity: sha512-i/n8VsZydrugj3Iuzll8+x/00GH2vnYsk1eomD8QiRrSAeW6ItbCQDtfXCeJHd0iwiNagqjQkvpvREEPtW3IoQ==}
+  style-mod@4.1.4:
+    resolution: {integrity: sha512-XXWIQt633/EpAFx8aZDOTjBzrCaGmhvEQlQo6MVPfa2OzO2cWo+4hV9h+6UkHYlXGfy+ODXKUdP7Pthmcu5ATw==}
 
   style-to-js@1.1.21:
     resolution: {integrity: sha512-RjQetxJrrUJLQPHbLku6U/ocGtzyjbJMP9lCNK7Ag0CNh690nSH8woqWH9u16nMjYBAok+i7JO1NP2pOy8IsPQ==}
@@ -10498,7 +10501,7 @@ snapshots:
       '@lezer/common': 1.5.2
       '@lezer/highlight': 1.2.3
       '@lezer/lr': 1.4.10
-      style-mod: 4.1.3
+      style-mod: 4.1.4
 
   '@codemirror/legacy-modes@6.5.4':
     dependencies:
@@ -10516,7 +10519,7 @@ snapshots:
       '@codemirror/state': 6.7.6
       '@codemirror/view': 6.43.13
       '@lezer/highlight': 1.2.3
-      style-mod: 4.1.3
+      style-mod: 4.1.4
 
   '@codemirror/search@6.7.2':
     dependencies:
@@ -10539,7 +10542,7 @@ snapshots:
     dependencies:
       '@codemirror/state': 6.7.6
       crelt: 1.0.7
-      style-mod: 4.1.3
+      style-mod: 4.1.4
       w3c-keyname: 2.2.8
 
   '@colordx/core@5.7.0': {}
@@ -10966,9 +10969,9 @@ snapshots:
   '@github/copilot-win32-x64@1.0.96':
     optional: true
 
-  '@glideapps/glide-data-grid-cells@6.0.4-alpha24(@types/react@19.3.0)(lodash@4.17.21)(marked@15.0.12)(react-dom@19.3.1(react@19.3.1))(react-responsive-carousel@3.2.23)(react@19.3.1)(supports-color@10.0.0)':
+  '@glideapps/glide-data-grid-cells@6.0.4-alpha24(@types/react@19.3.0)(lodash@4.18.1)(marked@15.0.12)(react-dom@19.3.1(react@19.3.1))(react-responsive-carousel@3.2.23)(react@19.3.1)(supports-color@10.0.0)':
     dependencies:
-      '@glideapps/glide-data-grid': 6.0.4-alpha24(lodash@4.17.21)(marked@15.0.12)(react-dom@19.3.1(react@19.3.1))(react-responsive-carousel@3.2.23)(react@19.3.1)(supports-color@10.0.0)
+      '@glideapps/glide-data-grid': 6.0.4-alpha24(lodash@4.18.1)(marked@15.0.12)(react-dom@19.3.1(react@19.3.1))(react-responsive-carousel@3.2.23)(react@19.3.1)(supports-color@10.0.0)
       '@linaria/react': 6.3.0(react@19.3.1)(supports-color@10.0.0)
       '@toast-ui/editor': 3.2.2
       '@toast-ui/react-editor': 3.2.3(react@19.3.1)
@@ -10982,11 +10985,11 @@ snapshots:
       - react-responsive-carousel
       - supports-color
 
-  '@glideapps/glide-data-grid@6.0.4-alpha24(lodash@4.17.21)(marked@15.0.12)(react-dom@19.3.1(react@19.3.1))(react-responsive-carousel@3.2.23)(react@19.3.1)(supports-color@10.0.0)':
+  '@glideapps/glide-data-grid@6.0.4-alpha24(lodash@4.18.1)(marked@15.0.12)(react-dom@19.3.1(react@19.3.1))(react-responsive-carousel@3.2.23)(react@19.3.1)(supports-color@10.0.0)':
     dependencies:
       '@linaria/react': 6.3.0(react@19.3.1)(supports-color@10.0.0)
       canvas-hypertxt: 1.0.3
-      lodash: 4.17.21
+      lodash: 4.18.1
       marked: 15.0.12
       react: 19.3.1
       react-dom: 19.3.1(react@19.3.1)
@@ -11296,9 +11299,9 @@ snapshots:
     dependencies:
       '@codemirror/state': 6.7.6
       '@codemirror/view': 6.43.13
-      diff: 8.0.2
+      diff: 8.0.4
 
-  '@marimo-team/codemirror-languageserver@2.0.1(@codemirror/autocomplete@6.20.3)(@codemirror/lint@6.9.7)(@codemirror/state@6.7.6)(@codemirror/view@6.43.13)':
+  '@marimo-team/codemirror-languageserver@2.0.2(@codemirror/autocomplete@6.20.3)(@codemirror/lint@6.9.7)(@codemirror/state@6.7.6)(@codemirror/view@6.43.13)':
     dependencies:
       '@codemirror/autocomplete': 6.20.3
       '@codemirror/lint': 6.9.7
@@ -11314,7 +11317,7 @@ snapshots:
       '@codemirror/view': 6.43.13
       '@modelcontextprotocol/sdk': 1.32.2(supports-color@10.0.0)(zod@4.6.7)
 
-  '@marimo-team/codemirror-sql@0.3.1(@codemirror/autocomplete@6.20.3)(@codemirror/lint@6.9.7)(@codemirror/state@6.7.6)(@codemirror/view@6.43.13)':
+  '@marimo-team/codemirror-sql@0.3.2(@codemirror/autocomplete@6.20.3)(@codemirror/lint@6.9.7)(@codemirror/state@6.7.6)(@codemirror/view@6.43.13)':
     dependencies:
       '@codemirror/autocomplete': 6.20.3
       '@codemirror/lint': 6.9.7
@@ -14986,7 +14989,7 @@ snapshots:
     dependencies:
       dequal: 2.0.3
 
-  diff@8.0.2: {}
+  diff@8.0.4: {}
 
   dir-glob@3.0.1:
     dependencies:
@@ -15465,10 +15468,10 @@ snapshots:
   flat-cache@6.1.19:
     dependencies:
       cacheable: 2.3.0
-      flatted: 3.3.3
+      flatted: 3.4.4
       hookified: 1.13.0
 
-  flatted@3.3.3: {}
+  flatted@3.4.4: {}
 
   flatten-vertex-data@1.0.2:
     dependencies:
@@ -16418,7 +16421,7 @@ snapshots:
 
   lodash.uniq@4.5.0: {}
 
-  lodash@4.17.21: {}
+  lodash@4.18.1: {}
 
   longest-streak@3.1.0: {}
 
@@ -17115,7 +17118,7 @@ snapshots:
       minimatch: 9.0.5
       pidtree: 0.6.0
       read-package-json-fast: 3.0.2
-      shell-quote: 1.8.3
+      shell-quote: 1.12.0
       which: 3.0.1
 
   npm-run-path@6.0.0:
@@ -17844,7 +17847,7 @@ snapshots:
       prosemirror-state: 1.4.4
       prosemirror-transform: 1.12.2
 
-  protocol-buffers-schema@3.6.0: {}
+  protocol-buffers-schema@3.6.1: {}
 
   proxy-addr@2.0.8:
     dependencies:
@@ -18502,7 +18505,7 @@ snapshots:
 
   resolve-protobuf-schema@2.1.0:
     dependencies:
-      protocol-buffers-schema: 3.6.0
+      protocol-buffers-schema: 3.6.1
 
   resolve@0.6.3: {}
 
@@ -18679,7 +18682,7 @@ snapshots:
 
   shebang-regex@3.0.0: {}
 
-  shell-quote@1.8.3: {}
+  shell-quote@1.12.0: {}
 
   side-channel-list@1.0.1:
     dependencies:
@@ -18946,7 +18949,7 @@ snapshots:
 
   strongly-connected-components@1.0.1: {}
 
-  style-mod@4.1.3: {}
+  style-mod@4.1.4: {}
 
   style-to-js@1.1.21:
     dependencies:

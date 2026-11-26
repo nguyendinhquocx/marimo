@@ -3,6 +3,8 @@
  * Do not make direct changes to the file.
  */
 
+import type { CellId } from "@marimo-team/client/protocol";
+
 /** Branded string type — compile-time only. */
 type TypedString<T extends string> = string & { __brand: T };
 
@@ -3886,18 +3888,6 @@ export interface components {
       op: "breakpoints";
     };
     /**
-     * CacheClearedNotification
-     * @description Execution cache cleared result.
-     *
-     *     Attributes:
-     *         bytes_freed: Bytes freed by clearing cache.
-     */
-    CacheClearedNotification: {
-      bytes_freed: number;
-      /** @enum {unknown} */
-      op: "cache-cleared";
-    };
-    /**
      * CacheConfig
      * @description Configuration for caching.
      */
@@ -3989,7 +3979,7 @@ export interface components {
       hide_code?: boolean;
     };
     /** Format: cell-id */
-    CellId: TypedString<"CellId">;
+    CellId: CellId;
     /** CellOutput */
     CellOutput: {
       channel: components["schemas"]["CellChannel"];
@@ -4299,22 +4289,6 @@ export interface components {
       destination: string;
       source: string;
     };
-    /**
-     * CreateCell
-     * @description Insert a new cell into the notebook.
-     */
-    CreateCell: {
-      /** @default null */
-      after?: components["schemas"]["CellId"] | null;
-      /** @default null */
-      before?: components["schemas"]["CellId"] | null;
-      cellId: components["schemas"]["CellId"];
-      code: string;
-      config: components["schemas"]["CellConfig"];
-      name: string;
-      /** @enum {unknown} */
-      type: "create-cell";
-    };
     /** CreateSecretRequest */
     CreateSecretRequest: {
       key: string;
@@ -4533,15 +4507,6 @@ export interface components {
       cellId: components["schemas"]["CellId"];
       /** @default null */
       request?: components["schemas"]["HTTPRequest"] | null;
-    };
-    /**
-     * DeleteCell
-     * @description Remove a cell from the notebook.
-     */
-    DeleteCell: {
-      cellId: components["schemas"]["CellId"];
-      /** @enum {unknown} */
-      type: "delete-cell";
     };
     /**
      * DeleteCellCommand
@@ -5433,15 +5398,6 @@ export interface components {
         [key: string]: string;
       };
     };
-    /**
-     * InterruptedNotification
-     * @description Kernel was interrupted by user (SIGINT/Ctrl+C).
-     */
-    InterruptedNotification: {
-      /** @enum {unknown} */
-      op: "interrupted";
-      run_id?: string | null;
-    };
     /** InvokeAiToolRequest */
     InvokeAiToolRequest: {
       arguments: Record<string, any>;
@@ -6196,19 +6152,6 @@ export interface components {
       method: "update";
       state: Record<string, any>;
     };
-    /**
-     * MoveCell
-     * @description Reposition a cell in the notebook.
-     */
-    MoveCell: {
-      /** @default null */
-      after?: components["schemas"]["CellId"] | null;
-      /** @default null */
-      before?: components["schemas"]["CellId"] | null;
-      cellId: components["schemas"]["CellId"];
-      /** @enum {unknown} */
-      type: "move-cell";
-    };
     /** MultipleDefinitionError */
     MultipleDefinitionError: {
       cells: components["schemas"]["CellId"][];
@@ -6231,25 +6174,12 @@ export interface components {
       /** @default 0 */
       version?: number;
     };
-    /**
-     * NotebookDocumentTransactionNotification
-     * @description Broadcasts an applied transaction to the frontend.
-     *
-     *     Sent by the session when the document changes (from any source).
-     *     The frontend applies the ops to update its local state.
-     */
-    NotebookDocumentTransactionNotification: {
-      /** @enum {unknown} */
-      op: "notebook-document-transaction";
-      transaction: components["schemas"]["Transaction"];
-    };
     NotificationMessage:
       | components["schemas"]["FunctionCallResultNotification"]
       | components["schemas"]["UIElementMessageNotification"]
       | components["schemas"]["ModelLifecycleNotification"]
       | components["schemas"]["RemoveUIElementsNotification"]
       | components["schemas"]["ReloadNotification"]
-      | components["schemas"]["InterruptedNotification"]
       | components["schemas"]["CompletedRunNotification"]
       | components["schemas"]["KernelReadyNotification"]
       | components["schemas"]["CompletionResultNotification"]
@@ -6261,8 +6191,6 @@ export interface components {
       | components["schemas"]["StartupLogsNotification"]
       | components["schemas"]["StartupProgressNotification"]
       | components["schemas"]["KernelStartupErrorNotification"]
-      | components["schemas"]["VariablesNotification"]
-      | components["schemas"]["VariableValuesNotification"]
       | components["schemas"]["QueryParamsSetNotification"]
       | components["schemas"]["QueryParamsAppendNotification"]
       | components["schemas"]["QueryParamsDeleteNotification"]
@@ -6279,7 +6207,6 @@ export interface components {
       | components["schemas"]["StorageEntriesNotification"]
       | components["schemas"]["StorageDownloadReadyNotification"]
       | components["schemas"]["SecretKeysResultNotification"]
-      | components["schemas"]["CacheClearedNotification"]
       | components["schemas"]["CacheInfoNotification"]
       | components["schemas"]["FocusCellNotification"]
       | components["schemas"]["CallbackOutputNotification"]
@@ -6288,7 +6215,6 @@ export interface components {
       | components["schemas"]["PdbInputNotification"]
       | components["schemas"]["BreakpointsNotification"]
       | components["schemas"]["ActiveLineNotification"]
-      | components["schemas"]["NotebookDocumentTransactionNotification"]
       | components["schemas"]["ConsumerCapabilitiesNotification"];
     /**
      * OpenAiConfig
@@ -6667,27 +6593,8 @@ export interface components {
     RenameNotebookRequest: {
       filename: string;
     };
-    /**
-     * ReorderCells
-     * @description Replace the full cell ordering.
-     *
-     *     Cell IDs present in the document but missing from `cell_ids`
-     *     are appended at the end. IDs not in the document are ignored.
-     */
-    ReorderCells: {
-      cellIds: components["schemas"]["CellId"][];
-      /** @enum {unknown} */
-      type: "reorder-cells";
-    };
     /** Format: request-id */
     RequestId: TypedString<"RequestId">;
-    /** Revision */
-    Revision: {
-      /** @description Identifies an execution. Unique within the host. */
-      execution_id: string;
-      /** @description How many times the value has been updated since it was produced. Zero at binding. */
-      update: number;
-    };
     /** RunningNotebooksResponse */
     RunningNotebooksResponse: {
       files: components["schemas"]["MarimoFile"][];
@@ -7134,39 +7041,6 @@ export interface components {
       /** @default null */
       request?: components["schemas"]["HTTPRequest"] | null;
     };
-    /**
-     * SetCode
-     * @description Replace a cell's source code.
-     */
-    SetCode: {
-      cellId: components["schemas"]["CellId"];
-      code: string;
-      /** @enum {unknown} */
-      type: "set-code";
-    };
-    /**
-     * SetConfig
-     * @description Replace a cell's config.
-     */
-    SetConfig: {
-      cellId: components["schemas"]["CellId"];
-      column: number | null;
-      disabled: boolean;
-      expandOutput: boolean;
-      hideCode: boolean;
-      /** @enum {unknown} */
-      type: "set-config";
-    };
-    /**
-     * SetName
-     * @description Rename a cell.
-     */
-    SetName: {
-      cellId: components["schemas"]["CellId"];
-      name: string;
-      /** @enum {unknown} */
-      type: "set-name";
-    };
     /** SetupRootError */
     SetupRootError: {
       edges_with_vars: [string, string[], string][];
@@ -7488,35 +7362,6 @@ export interface components {
       source: "backend" | "frontend" | "mcp";
     };
     /**
-     * Transaction
-     * @description An atomic batch of changes applied to a NotebookDocument.
-     *
-     *     `source` identifies the writer (e.g. `"frontend"`, `"kernel"`).
-     *     `version` is `None` when created and stamped by
-     *     `NotebookDocument.apply()`.
-     */
-    Transaction: {
-      changes: (
-        | components["schemas"]["CreateCell"]
-        | components["schemas"]["DeleteCell"]
-        | components["schemas"]["MoveCell"]
-        | components["schemas"]["ReorderCells"]
-        | components["schemas"]["SetCode"]
-        | components["schemas"]["SetName"]
-        | components["schemas"]["SetConfig"]
-      )[];
-      /** @enum {unknown} */
-      source:
-        | "cell-manager"
-        | "code-mode"
-        | "file-watch"
-        | "frontend"
-        | "host"
-        | "kernel";
-      /** @default null */
-      version?: number | null;
-    };
-    /**
      * TyLanguageServerConfig
      * @description Configuration options for Ty Language Server.
      *
@@ -7713,75 +7558,8 @@ export interface components {
       previewValue: unknown;
       valueType: string;
     };
-    /**
-     * VariableDeclarationNotification
-     * @description Variable declaration and usage for dataflow graph.
-     *
-     *     Attributes:
-     *         name: Variable name.
-     *         declared_by: Cell IDs that define this variable.
-     *         used_by: Cell IDs that use this variable.
-     */
-    VariableDeclarationNotification: {
-      declared_by: components["schemas"]["CellId"][];
-      name: components["schemas"]["VariableName"];
-      used_by: components["schemas"]["CellId"][];
-    };
     /** Format: variable-name */
     VariableName: TypedString<"VariableName">;
-    /**
-     * VariableRemoval
-     * @description A binding removed from the runtime's namespace.
-     */
-    VariableRemoval: {
-      execution_id: string;
-      name: string;
-    };
-    /**
-     * VariableValue
-     * @description Variable value and type for variables panel.
-     *
-     *     Attributes:
-     *         name: Variable name.
-     *         value: String representation of value.
-     *         datatype: Data type as string.
-     */
-    VariableValue: {
-      datatype: string | null;
-      /** @default null */
-      execution_id?: string | null;
-      name: string;
-      /** @default null */
-      revision?: components["schemas"]["Revision"] | null;
-      value: string | null;
-    };
-    /**
-     * VariableValuesNotification
-     * @description Current variable values.
-     *
-     *     Attributes:
-     *         variables: Variables with current values and types.
-     *         removed: Bindings that no longer exist, identified by their producer.
-     */
-    VariableValuesNotification: {
-      /** @enum {unknown} */
-      op: "variable-values";
-      /** @default [] */
-      removed?: components["schemas"]["VariableRemoval"][];
-      variables: components["schemas"]["VariableValue"][];
-    };
-    /**
-     * VariablesNotification
-     * @description Variable dataflow graph.
-     *
-     *     Attributes:
-     *         variables: Variable declarations and usage.
-     */
-    VariablesNotification: {
-      /** @enum {unknown} */
-      op: "variables";
-      variables: components["schemas"]["VariableDeclarationNotification"][];
-    };
     /**
      * VenvConfig
      * @description Configuration for an external Python environment in edit mode.

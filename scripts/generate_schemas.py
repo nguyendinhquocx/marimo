@@ -39,7 +39,6 @@ with app.setup:
         o.FunctionCallResultNotification,
         o.RemoveUIElementsNotification,
         o.UIElementMessageNotification,
-        o.InterruptedNotification,
         o.CompletedRunNotification,
         o.KernelReadyNotification,
         o.CompletionResultNotification,
@@ -50,8 +49,6 @@ with app.setup:
         o.StartupLogsNotification,
         o.BannerNotification,
         o.ReloadNotification,
-        o.VariablesNotification,
-        o.VariableValuesNotification,
         o.DatasetsNotification,
         o.SQLTablePreviewNotification,
         o.SQLTableListPreviewNotification,
@@ -67,7 +64,6 @@ with app.setup:
         o.FocusCellNotification,
         o.BreakpointsNotification,
         o.SecretKeysResultNotification,
-        o.CacheClearedNotification,
         o.CacheInfoNotification,
     ]
 

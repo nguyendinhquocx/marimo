@@ -11,12 +11,18 @@ import pytest
 from marimo._core import protocol
 from marimo._core.stream import RoutedEvent, Stream, snapshot_event
 from marimo._messaging.cell_output import CellOutput
+from marimo._messaging.notebook.changes import Transaction
 from marimo._messaging.notification import (
     CallbackOutputNotification,
     CellNotification,
     CompletedRunNotification,
     ExecutionNotification,
+    InterruptedNotification,
+    NotebookDocumentTransactionNotification,
+    NotificationMessage,
     PdbOutputNotification,
+    VariablesNotification,
+    VariableValuesNotification,
 )
 from marimo._server.host.api import _frame
 from marimo._server.host.events import (
@@ -144,6 +150,24 @@ def test_extension_routing_and_control_filters() -> None:
         control = RoutedEvent(wire, notebook_id=notebook_id)
         assert control.wanted({"cell"}, "other-run")
         assert not control.visible_in(notebook_id)
+
+
+@pytest.mark.parametrize(
+    "notification",
+    [
+        NotebookDocumentTransactionNotification(
+            transaction=Transaction(changes=(), source="code-mode")
+        ),
+        InterruptedNotification(run_id="run"),
+        VariablesNotification(variables=[]),
+        VariableValuesNotification(variables=[]),
+    ],
+)
+def test_kernel_notifications_stay_internal(
+    notification: NotificationMessage,
+) -> None:
+    assert notification_event(None, notification) is None
+    assert not list(EditorNotifications().events(None, notification))
 
 
 def test_editor_does_not_forward_cell_status_changes() -> None:

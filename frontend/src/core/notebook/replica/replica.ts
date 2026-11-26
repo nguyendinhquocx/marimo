@@ -10,9 +10,9 @@ import {
   StreamStopped,
 } from "@marimo-team/client";
 import type {
-  Analysis,
+  AnalysisOutput as Analysis,
   Attachment,
-  Execution as HostExecution,
+  ExecutionOutput as HostExecution,
   Output as HostOutput,
   NotebookOutput,
   Runtime,
@@ -287,12 +287,21 @@ export function createNotebookReplica(
         return {
           stream: next,
           retained: null,
-          analyzed: analysisView(followed.analyzed, document.current, analysis),
+          analyzed: analysisView(
+            retained && retained.notebook?.id !== next.notebook?.id
+              ? null
+              : followed.analyzed,
+            document.current,
+            analysis,
+          ),
         };
       }
       return {
         stream: next,
-        analyzed: null,
+        analyzed:
+          followed.analyzed?.freshness === "current"
+            ? { ...followed.analyzed, freshness: "stale" }
+            : followed.analyzed,
         retained: stream.phase === "snapshot" ? retained : stream,
       };
     });
